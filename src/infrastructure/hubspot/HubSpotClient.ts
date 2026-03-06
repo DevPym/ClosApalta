@@ -2,60 +2,103 @@ import { config } from "../../config/index.js";
 import type { UnifiedContact } from "../../domain/types.js";
 
 export class HubSpotClient {
-  private url = "https://api.hubapi.com/crm/v3/objects/contacts";
-  // .trim() para eliminar cualquier espacio accidental del .env
+  private baseUrl = "https://api.hubapi.com/crm/v3/objects/contacts";
   private token = config.hubspot.accessToken.trim();
 
   async syncContact(contact: UnifiedContact) {
-    // 1. TEST DE CONEXIÓN: ¿El token es válido?
     try {
-      console.log("🔍 Verificando conexión con HubSpot...");
-      const testReq = await fetch(
-        "https://api.hubapi.com/crm/v3/objects/contacts?limit=1",
-        {
-          headers: { Authorization: `Bearer ${this.token}` },
-        },
-      );
-      if (!testReq.ok) {
-        const errorText = await testReq.text();
-        throw new Error(`Token inválido o expirado. Respuesta: ${errorText}`);
-      }
-      console.log("✅ Conexión con HubSpot validada.");
-    } catch (e: any) {
-      console.error("❌ ERROR CRÍTICO DE AUTENTICACIÓN:", e.message);
-      throw e;
-    }
+      // 1. Intentamos CREAR al contacto directamente
+      console.log(`📤 Intentando crear a ${contact.email}...`);
 
-    // 2. ENVÍO DEL CONTACTO
-    const payload = {
-      properties: {
-        email: contact.email,
-        firstname: contact.firstName,
-        lastname: contact.lastName,
-      },
+      const payload = {
+        properties: {
+          email: contact.email,
+          firstname: contact.firstName,
+          lastname: contact.lastName
+        }
+      };
+
+      const response = await fetch(this.baseUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+
+      // 2. Si se crea con éxito (201), terminamos
+      if (response.status === 201) {
+        console.log("✅ Contacto creado exitosamente.");
+        return data;
+      }
+
+      // 3. SI YA EXISTE (Error 409), vamos a ACTUALIZARLO
+      if (response.status === 409) {
+        console.log("ℹ️ El contacto ya existe. Iniciando fase de actualización (Update)...");
+        return await this.updateContact(contact);
+      }
+
+      throw new Error(`Error inesperado en HubSpot: ${JSON.stringify(data)}`);
+
+    } catch (error: any) {
+      console.error("❌ Error en HubSpot Client:", error.message);
+      throw error;
+    }
+  }
+
+  private async updateContact(contact: UnifiedContact) {
+    const searchUrl = `${this.baseUrl}/search`;
+    const searchBody = {
+      filterGroups: [{
+        filters: [{ propertyName: 'email', operator: 'EQ', value: contact.email }]
+      }]
     };
 
-    console.log(`📤 Enviando payload:`, JSON.stringify(payload));
-
-    const response = await fetch(this.url, {
-      method: "POST",
+    const searchRes = await fetch(searchUrl, {
+      method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
+        'Authorization': `Bearer ${this.token}`,
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(searchBody)
     });
 
-    const responseData = await response.text();
-
-    if (!response.ok) {
-      console.error(
-        `❌ Error 400 - Respuesta Cruda de HubSpot: ${responseData}`,
-      );
-      throw new Error(`HubSpot rechazó la petición: ${responseData}`);
+    // 💡 Definimos la estructura mínima que esperamos de HubSpot
+    interface HubSpotSearchResponse {
+      results: Array<{ id: string }>;
     }
 
-    return JSON.parse(responseData);
+    // 🎯 Casteamos la respuesta para que TypeScript deje de quejarse
+    const searchData = (await searchRes.json()) as HubSpotSearchResponse;
+
+    // Ahora 'results' ya es reconocido
+    const contactId = searchData.results?.[0]?.id;
+
+    if (!contactId) {
+      throw new Error(`No se pudo encontrar el ID para el email: ${contact.email}`);
+    }
+
+    console.log(`🔄 Actualizando contacto ID: ${contactId}...`);
+
+    const updateResponse = await fetch(`${this.baseUrl}/${contactId}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${this.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        properties: {
+          firstname: contact.firstName,
+          lastname: contact.lastName
+        }
+      })
+    });
+
+    return await updateResponse.json();
   }
+
+
 }
