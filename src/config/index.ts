@@ -8,6 +8,9 @@ export const config = {
     appKey: process.env.ORACLE_APP_KEY || '',
     hotelId: process.env.ORACLE_HOTEL_ID || '',
     baseUrl: process.env.ORACLE_BASE_URL || '',
+
+    username: process.env.ORACLE_USERNAME || '',
+    password: process.env.ORACLE_PASSWORD || '',
   },
   hubspot: {
     accessToken: process.env.HUBSPOT_ACCESS_TOKEN || '',
@@ -18,7 +21,18 @@ export const config = {
   }
 };
 
-// Validación simple
-if (!config.oracle.appKey || !config.hubspot.accessToken) {
-  throw new Error("❌ Faltan configuraciones críticas en el archivo .env");
-}
+// 🛡️ Validación: Si falta uno de estos, el puente no arranca
+const requiredConfigs = [
+  { val: config.oracle.appKey, name: 'ORACLE_APP_KEY' },
+  { val: config.oracle.username, name: 'ORACLE_USERNAME' },
+  { val: config.oracle.password, name: 'ORACLE_PASSWORD' },
+  { val: config.hubspot.accessToken, name: 'HUBSPOT_ACCESS_TOKEN' }
+];
+
+requiredConfigs.forEach(item => {
+  if (!item.val) {
+    throw new Error(`❌ ERROR CRÍTICO: Falta ${item.name} en el archivo .env`);
+  }
+});
+
+console.log("✅ Configuración cargada y validada correctamente.");
