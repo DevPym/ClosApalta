@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    /* Configuración del Entorno */
+    "target": "ESNext",
+    "module": "NodeNext",      /* Crucial: Activa el soporte nativo para ES Modules en Node.js */
+    "moduleResolution": "NodeNext", 
+    "lib": ["ESNext"],
+    "types": ["node"],
+
+    /* Estructura de Archivos */
+    "rootDir": "./src",
+    "outDir": "./dist",
+    /* "baseUrl": ".",*/
+
+    /* Interoperabilidad y Estilo */
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true, /* Enforce 'import type' y sintaxis moderna */
+    "isolatedModules": true,      /* Asegura compatibilidad con ts-node */
+    "moduleDetection": "force",
+
+    /* Validación de Tipos Estricta */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+
+    /* Otros */
+    "sourceMap": true,
+    "declaration": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
