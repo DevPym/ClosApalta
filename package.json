@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "dev": "node --loader ts-node/esm src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -29,6 +29,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.4",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

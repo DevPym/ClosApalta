@@ -3,7 +3,7 @@ import type { UnifiedContact } from "../../domain/types.js";
 
 export class HubSpotClient {
   private baseUrl = "https://api.hubapi.com/crm/v3/objects/contacts";
-  private token = config.hubspot.accessToken.trim();
+  private token = config.hubspot.accessToken;
 
   async syncContact(contact: UnifiedContact) {
     try {
