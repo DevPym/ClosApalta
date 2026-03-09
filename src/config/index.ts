@@ -1,24 +1,26 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-export const config = {
-  oracle: {
-    clientId: process.env.ORACLE_CLIENT_ID || '',
-    clientSecret: process.env.ORACLE_CLIENT_SECRET || '',
-    appKey: process.env.ORACLE_APP_KEY || '',
-    hotelId: process.env.ORACLE_HOTEL_ID || '',
-    baseUrl: process.env.ORACLE_BASE_URL || '',
+// src/config/index.ts (o donde tengas tu config)
 
-    username: process.env.ORACLE_USERNAME || '',
-    password: process.env.ORACLE_PASSWORD || '',
-  },
-  hubspot: {
-    accessToken: process.env.HUBSPOT_ACCESS_TOKEN || '',
-  },
+export const config = {
   server: {
     port: process.env.PORT || 3000,
-    webhookSecret: process.env.WEBHOOK_SECRET || '',
-  }
+  },
+  hubspot: {
+    accessToken: process.env.HUBSPOT_ACCESS_TOKEN || "",
+    // ✅ AÑADE ESTA LÍNEA:
+    appId: process.env.HUBSPOT_APP_ID || "32858611",
+  },
+  oracle: {
+    baseUrl: process.env.ORACLE_BASE_URL || "",
+    clientId: process.env.ORACLE_CLIENT_ID || "",
+    clientSecret: process.env.ORACLE_CLIENT_SECRET || "",
+    appKey: process.env.ORACLE_APP_KEY || "",
+    hotelId: process.env.ORACLE_HOTEL_ID || "CAR",
+    username: process.env.ORACLE_USERNAME || '',
+    password: process.env.ORACLE_PASSWORD || ''
+  },
 };
 
 // 🛡️ Validación: Si falta uno de estos, el puente no arranca
