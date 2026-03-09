@@ -93,38 +93,105 @@ export class OracleClient {
     }
   }
 
+  // ------------------------------------------------------------------------
+  // ✏️ UPDATE: Actualizar Huésped en Oracle
+  // ------------------------------------------------------------------------
   async updateGuestProfile(oracleId: string, properties: Record<string, any>) {
     if (!this.accessToken) await this.authenticate();
+
+    // Oracle siempre requiere el apellido para un Guest
     if (!properties.lastname) {
       console.log("⚠️ Update cancelado: Falta el apellido obligatorio.");
       return;
     }
+
     try {
-      const body = {
+      const body: any = {
         profileDetails: {
+          profileType: "Guest", // ✅ LLAVE MAESTRA OBLIGATORIA
           customer: {
             personName: [{
-              givenName: properties.firstname || "",
-              surname: properties.lastname,
+              givenName: (properties.firstname || "").trim(),
+              surname: properties.lastname.trim(),
               nameType: "Primary"
-            }]
+            }],
+            language: "E"
           }
         }
       };
-      await axios.put(`${config.oracle.baseUrl}/crm/v1/profiles/${oracleId}`, body, { headers: this.getHeaders() });
-      console.log(`✅ Perfil Oracle ${oracleId} actualizado.`);
+
+      // Si el webhook detectó cambio de email, lo agregamos con la estructura estricta
+      if (properties.email) {
+        body.profileDetails.emails = {
+          emailInfo: [{
+            email: {
+              type: "EMAIL", // ✅ Adentro del objeto email
+              emailAddress: properties.email.trim(),
+              primaryInd: true
+            }
+          }]
+        };
+      }
+
+      await axios.put(
+        `${config.oracle.baseUrl}/crm/v1/profiles/${oracleId}`,
+        body,
+        { headers: this.getHeaders() }
+      );
+      console.log(`✅ [Oracle] Perfil ${oracleId} actualizado correctamente.`);
     } catch (error: any) {
-      console.error("❌ Error en updateGuestProfile:", JSON.stringify(error.response?.data, null, 2));
+      console.error("❌ Error en updateGuestProfile:");
+      console.error("📋 Respuesta:", JSON.stringify(error.response?.data || error.message, null, 2));
     }
   }
 
-  async getGuestProfile(profileId: string) {
+  // ------------------------------------------------------------------------
+  // 🗑️ DELETE: Inactivar Huésped en Oracle (Desde HubSpot a Oracle)
+  // ------------------------------------------------------------------------
+  async inactivateGuestProfile(oracleId: string) {
     if (!this.accessToken) await this.authenticate();
-    const response = await axios.get(
-      `${config.oracle.baseUrl}/crm/v1/profiles/${profileId}?fetchInstructions=Profile`,
-      { headers: this.getHeaders() }
-    );
-    return response.data;
+    try {
+      console.log(`🗑️ [Oracle] Solicitud para inactivar perfil ${oracleId} recibida.`);
+
+      /* // 🚨 CÓDIGO COMENTADO HASTA DEFINIR REGLAS DE NEGOCIO 🚨
+      // Para inactivar en OPERA, usualmente se envía el estado "active: false" 
+      // o se actualiza el campo de estado del perfil.
+      
+      const body = {
+        profileDetails: {
+          profileType: "Guest",
+          markAsInactive: true, // Esto depende de la versión exacta de la API
+          statusCode: "INACTIVE"
+        }
+      };
+
+      await axios.put(
+        `${config.oracle.baseUrl}/crm/v1/profiles/${oracleId}`, 
+        body, 
+        { headers: this.getHeaders() }
+      );
+      console.log(`✅ [Oracle] Perfil ${oracleId} marcado como inactivo.`);
+      */
+
+      console.log(`ℹ️ [Oracle] Acción de inactivación ignorada por el momento (Código comentado).`);
+    } catch (error: any) {
+      console.error(`❌ [Oracle] Error al inactivar perfil ${oracleId}:`, error.message);
+    }
+  }
+
+  async getGuestProfile(profileId: string): Promise<any> {
+    if (!this.accessToken) await this.authenticate();
+    try {
+      const response = await axios.get(
+        `${config.oracle.baseUrl}/crm/v1/profiles/${profileId}`,
+        { headers: this.getHeaders() }
+      );
+      console.log(`✅ [Oracle] Perfil ${profileId} consultado con éxito.`);
+      return response.data;
+    } catch (error: any) {
+      console.error(`❌ [Oracle] Error al consultar perfil ${profileId}:`, error.message);
+      throw error;
+    }
   }
 
   async deleteGuestProfile(profileId: string) {

@@ -140,4 +140,26 @@ export class HubSpotClient {
       console.error("❌ Error en actualización de reserva:", error.message);
     }
   }
+
+  // ------------------------------------------------------------------------
+  // 🗑️ DELETE: Archivar contacto en HubSpot (Desde Oracle a HubSpot)
+  // ------------------------------------------------------------------------
+  async archiveContact(hubspotId: string) {
+    try {
+      console.log(`🗑️ [HubSpot] Solicitud para archivar contacto ${hubspotId} recibida.`);
+
+      /*
+      // 🚨 CÓDIGO COMENTADO HASTA DEFINIR REGLAS DE NEGOCIO 🚨
+      // Utiliza el endpoint DELETE de la API de HubSpot para archivar el contacto.
+      // Quedará en la papelera de HubSpot por 90 días.
+
+      await this.hubspotClient.crm.contacts.basicApi.archive(hubspotId);
+      console.log(`✅ [HubSpot] Contacto ${hubspotId} archivado con éxito.`);
+      */
+
+      console.log(`ℹ️ [HubSpot] Acción de archivar ignorada por el momento (Código comentado).`);
+    } catch (error: any) {
+      console.error(`❌ [HubSpot] Error al archivar contacto ${hubspotId}:`, error.message);
+    }
+  }
 }

@@ -7,6 +7,7 @@ import {
   mapOracleReservation,
   mapOracleToUnified,
 } from "./application/mappers.js";
+import { OracleStreamer } from "./infrastructure/oracle/OracleStreamer.js";
 
 const app = express();
 app.use(express.json());
@@ -14,6 +15,20 @@ app.use(express.json());
 // Clientes e Instancias
 const oracle = new OracleClient();
 const hubspot = new HubSpotClient();
+// 🔥 NUEVO: Inicializar el escuchador de WebSockets
+const oracleStreamer = new OracleStreamer(oracle, async (oracleEventData) => {
+  try {
+    // Reutilizamos tu lógica exacta del webhook
+    const unifiedContact = mapOracleToUnified(oracleEventData);
+    const result = await hubspot.syncContact(unifiedContact);
+    console.log(`✅ [Streamer] Contacto sincronizado a HubSpot. ID: ${(result as any)?.id}`);
+  } catch (error: any) {
+    console.error("❌ [Streamer] Error sincronizando evento a HubSpot:", error.message);
+  }
+});
+
+// Puedes iniciar el streamer justo antes de app.listen()
+// oracleStreamer.connect(); // 🚨 DESCOMENTAR CUANDO ORACLE ACTIVE EL TICKET
 
 // Constantes de Eventos HubSpot
 const EVENT_CREATION = "contact.creation";
@@ -44,11 +59,18 @@ app.post("/webhook/hubspot", async (req: Request, res: Response) => {
       // para evitar que un 404 de un contacto borrado detenga todo el proceso.
       try {
         // ✨ 1. CREACIÓN (Handshake inicial)
+        // ✨ 1. CREACIÓN (Handshake inicial)
         if (subscriptionType === EVENT_CREATION) {
           console.log(`🆕 Handshake: Iniciando para HS ${objectId}`);
           const hsData = await hubspot.getContactById(objectId);
-          const newOracleId = await oracle.createGuestProfile(hsData);
-          await hubspot.updateOracleId(objectId, newOracleId);
+
+          // 🛡️ PROTECCIÓN ANTI-ECO: Si ya tiene ID de Oracle, vino de allá. No lo duplicamos.
+          if (hsData.id_oracle) {
+            console.log(`ℹ️ Ignorando creación: HS ${objectId} ya tiene ID Oracle (${hsData.id_oracle}). El perfil se originó en OPERA.`);
+          } else {
+            const newOracleId = await oracle.createGuestProfile(hsData);
+            await hubspot.updateOracleId(objectId, newOracleId);
+          }
         }
 
         // ✏️ 2. EDICIÓN (Sincronización de cambios)
