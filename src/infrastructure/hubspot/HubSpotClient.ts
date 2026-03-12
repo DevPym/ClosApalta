@@ -1,6 +1,16 @@
 import hubspot from "@hubspot/api-client";
 import { config } from "../../config/index.js";
 
+
+
+/* Interfaces */
+
+interface HubSpotAssociation {
+  id: string;
+  types: { label?: string; typeId: number; category: string }[];
+}
+
+
 export class HubSpotClient {
   // 🔥 Cambiado a público y nombre estándar para que index.ts lo vea
   public client: any;
@@ -132,6 +142,27 @@ export class HubSpotClient {
     } catch (error: any) {
       console.error(`❌ Error buscando asociación para Negocio ${dealId}:`, error.message);
       return null;
+    }
+  }
+
+  // infrastructure/hubspot/HubSpotClient.ts
+
+
+  // Dentro de la clase HubSpotClient
+  async getAssociatedContacts(dealId: string) {
+    try {
+      const response = await this.client.crm.deals.associationsApi.getAll(dealId, 'contacts');
+      const results = response.results as HubSpotAssociation[]; // Cast de tipo
+
+      return results.map((assoc: HubSpotAssociation) => ({
+        contactId: assoc.id,
+        labels: assoc.types
+          .map((t) => t.label)
+          .filter((l): l is string => !!l) // Filtro para asegurar que 'l' es string y no undefined
+      }));
+    } catch (error: any) {
+      console.error("❌ Error al obtener contactos asociados:", error.message);
+      return [];
     }
   }
 }

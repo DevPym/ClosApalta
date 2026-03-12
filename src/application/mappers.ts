@@ -1,15 +1,21 @@
 import type { UnifiedContact, UnifiedReservation } from "../domain/types.js";
 
+
+
+
+
+
 /**
  * 🛠️ UTILS: Formateo de fechas para HubSpot
  * Oracle: "2026-03-09 10:00:00" -> HubSpot: "2026-03-09"
  */
-const formatToHubSpotDate = (dateString?: string | null): string => {
-  if (!dateString) return ""; // Si es null o undefined, devolvemos string vacío
-
-  // Como ya validamos arriba, usamos el encadenamiento opcional por pura seguridad
-  return dateString?.split('T')?.[0]?.split(' ')?.[0] || "";
-};
+function formatToHubSpotDate(dateVal: any): string {
+  if (!dateVal) return "";
+  const dateStr = typeof dateVal === 'object' ? dateVal.value : dateVal;
+  if (!dateStr) return "";
+  // Si viene con timestamp, extraemos solo la fecha
+  return dateStr.split("T")[0];
+}
 
 // ============================================================================
 // 📖 DICCIONARIOS DE TRADUCCIÓN GLOBAL (HubSpot <-> Oracle Clos Apalta)
@@ -265,15 +271,27 @@ const formatHSDate = (hsValue: any) => {
   return date.toISOString().split('T')[0];
 };
 
-export function mapHubSpotReservationToOracle(hubspotDeal: any, hubspotContact: any): any {
-  const props = hubspotDeal?.properties || hubspotDeal || {};
-  const contactProps = hubspotContact?.properties || hubspotContact || {};
 
-  // Extraemos y formateamos las fechas correctamente
+
+// 1. Definimos la interfaz para los perfiles (buena práctica de TypeScript)
+export interface GuestProfile {
+  id: string;
+  isPrimary: boolean;
+}
+
+/**
+ * Mapea un Negocio de HubSpot y su lista de contactos a la estructura de reserva de Oracle
+ */
+export function mapHubSpotReservationToOracle(hubspotDeal: any, guestProfiles: GuestProfile[]): any {
+
+  // Extraemos las propiedades (manejando si vienen envueltas en .properties o no)
+  const props = hubspotDeal?.properties || hubspotDeal || {};
+
+  // Formateo de fechas (asumiendo que tienes la función formatHSDate definida en el archivo)
   const checkIn = formatHSDate(props.check_in);
   const checkOut = formatHSDate(props.check_out);
 
-  // Traducir códigos
+  // Traducir códigos de HubSpot a Opera
   const sourceCode = props.fuente_de_reserva?.value || props.fuente_de_reserva || "HS";
   const roomTypeCode = props.room_type?.value || props.room_type || "OWNERC";
   const ratePlanCode = props.tipo_de_tarifa?.value || "BAROV";
@@ -281,21 +299,23 @@ export function mapHubSpotReservationToOracle(hubspotDeal: any, hubspotContact: 
 
   return {
     reservations: {
-      reservation: [ // 🔥 CAMBIO: Ahora es un Array []
+      reservation: [
         {
-          reservationGuests: [
-            {
-              profileInfo: {
-                profileIdList: [
-                  {
-                    type: "Profile",
-                    id: contactProps.id_oracle?.value || contactProps.id_oracle
-                  }
-                ]
-              },
-              primary: true
-            }
-          ],
+          // ------------------------------------------------------------------
+          // 👥 SECCIÓN DE HUÉSPEDES (Múltiples perfiles)
+          // ------------------------------------------------------------------
+          reservationGuests: guestProfiles.map((profile: GuestProfile) => ({
+            profileInfo: {
+              profileIdList: [
+                {
+                  type: "Profile",
+                  id: profile.id
+                }
+              ]
+            },
+            primary: profile.isPrimary // Se asigna segun el label "huésped principal"
+          })),
+
           roomStay: {
             roomRates: [
               {
@@ -304,17 +324,19 @@ export function mapHubSpotReservationToOracle(hubspotDeal: any, hubspotContact: 
                 ratePlanCode: ratePlanCode,
                 sourceCode: sourceCode,
                 marketCode: "BAR",
-                start: checkIn, // ✅ Ahora es "2027-01-01"
-                end: checkOut    // ✅ Ahora es "2027-01-03"
+                start: checkIn,
+                end: checkOut
               }
             ],
             guestCounts: {
-              adults: parseInt(props.numero_de_huespedes?.value || props.numero_de_huespedes) || 2,
+              // 💡 Sincronizamos los adultos con el número de perfiles enviados
+              adults: guestProfiles.length > 0 ? guestProfiles.length : (parseInt(props.numero_de_huespedes?.value || props.numero_de_huespedes) || 2),
               children: 0
             },
             arrivalDate: checkIn,
             departureDate: checkOut
           },
+
           reservationPaymentMethods: [
             {
               paymentMethod: paymentCode
@@ -325,3 +347,4 @@ export function mapHubSpotReservationToOracle(hubspotDeal: any, hubspotContact: 
     }
   };
 }
+

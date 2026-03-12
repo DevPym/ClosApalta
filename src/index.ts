@@ -62,88 +62,81 @@ app.get("/", (req: Request, res: Response) => {
 // 🟠 WEBHOOK DE RESERVAS (DEALS) - CREACIÓN Y ACTUALIZACIÓN
 // ----------------------------------------------------------------------------------------
 app.post("/webhook/hubspot/deal", async (req: Request, res: Response) => {
-  console.log("\n📥 [RECIBIDO] Petición de Negocio desde HubSpot...");
+  console.log("\n📥 [RECIBIDO] Petición de Negocio Multi-Huésped...");
   try {
     const payload = req.body;
     if (!payload.objectId) return res.status(400).json({ error: "Falta objectId" });
-
     const dealId = String(payload.objectId);
     const props = payload.properties;
-
-    // 🕵️ Verificar si ya existe en Oracle
+    // 🕵️ Datos previos en HubSpot
     const existingOracleId = props.id_oracle?.value || props.id_oracle;
     const currentConfirmation = props.numero_de_reserva?.value || props.numero_de_reserva;
-
-    // 🔍 1. Buscar contacto asociado
-    const contactId = await hubspot.getContactIdFromDeal(dealId);
-    if (!contactId) return res.status(400).json({ error: "Sin contacto asociado" });
-
-    const hsContactData = await hubspot.getContactById(contactId);
-    let oracleProfileId = hsContactData.id_oracle;
-
-    if (!oracleProfileId) {
-      oracleProfileId = await oracle.createGuestProfile(hsContactData);
-      await hubspot.updateOracleId(contactId, oracleProfileId);
+    // 🔍 1. Buscar TODOS los contactos asociados con sus etiquetas
+    const associations = await hubspot.getAssociatedContacts(dealId);
+    if (associations.length === 0) {
+      console.warn(`⚠️ Negocio ${dealId} no tiene contactos asociados.`);
+      return res.status(400).json({ error: "El negocio no tiene contactos asociados." });
     }
-
-    // 🏨 2. Mapear datos
-    const oracleJsonPayload = mapHubSpotReservationToOracle(props, {
-      properties: { id_oracle: oracleProfileId }
-    });
-
+    // 🔍 2. HANDSHAKE MULTIPLE: Asegurar que cada contacto tenga ID en Oracle
+    // 'assoc' está tipado correctamente desde HubSpotClient
+    const guestProfiles = await Promise.all(associations.map(async (assoc: any) => {
+      const hsContact = await hubspot.getContactById(assoc.contactId);
+      let oracleId = hsContact.id_oracle;
+      if (!oracleId) {
+        console.log(`🆕 Creando perfil faltante para: ${hsContact.firstName}`);
+        oracleId = await oracle.createGuestProfile(hsContact);
+        await hubspot.updateOracleId(assoc.contactId, oracleId);
+      }
+      // Validamos el label: Buscamos si alguno coincide con "huésped principal"
+      const isPrimary = assoc.labels.some((l: string) =>
+        l.toLowerCase() === "huésped principal"
+      );
+      return { id: oracleId, isPrimary };
+    }));
+    // 🛡️ Validación de seguridad: Si nadie tiene la etiqueta, el primero es el principal
+    if (guestProfiles.length > 0 && !guestProfiles.some(g => g.isPrimary)) {
+      const firstGuest = guestProfiles[0];
+      if (firstGuest) {
+        firstGuest.isPrimary = true;
+      }
+    }
+    // 🏨 3. Mapear datos con la lista de perfiles (Primary + Acompañantes)
+    const oracleJsonPayload = mapHubSpotReservationToOracle(props, guestProfiles);
     let internalId: string;
     let rawResponse: any;
-
-    // --------------------------------------------------------------------------
-    // 🚀 3. EJECUCIÓN: ¿ACTUALIZAR O CREAR?
-    // --------------------------------------------------------------------------
+    // 🚀 4. CREAR O ACTUALIZAR
     if (existingOracleId && existingOracleId !== "" && existingOracleId !== "undefined") {
-      console.log(`🔄 Sincronizando: Actualizando reserva existente ${existingOracleId}...`);
-
+      console.log(`🔄 Actualizando reserva existente ${existingOracleId}...`);
       const updatePayload = {
-        reservations: {
-          reservation: oracleJsonPayload.reservations.reservation[0] // Objeto único para PUT
-        }
+        reservation: oracleJsonPayload.reservations.reservation[0]
       };
-
       rawResponse = await oracle.updateReservation(String(existingOracleId), updatePayload);
       internalId = String(existingOracleId);
     } else {
-      console.log(`📡 Sincronizando: Creando NUEVA reserva en Oracle...`);
+      console.log(`📡 Creando NUEVA reserva en Oracle para ${guestProfiles.length} personas...`);
       const createResponse = await oracle.createReservationInOracle(oracleJsonPayload);
       internalId = String(createResponse.id);
       rawResponse = createResponse.raw;
     }
-
-    // --------------------------------------------------------------------------
-    // 🕵️ 4. EXTRACCIÓN CON RE-INTENTO (Para asegurar los 9 dígitos)
-    // --------------------------------------------------------------------------
+    // 🕵️ 5. RASTREADOR Y RE-INTENTO (Para capturar los 9 dígitos)
     let confirmationId = findConfirmationId(rawResponse);
-
     if (!confirmationId) {
-      console.log(`🔍 No hallado a la primera. Re-consultando reserva ${internalId} en Oracle...`);
-      await new Promise(resolve => setTimeout(resolve, 600)); // Pequeña espera para que Oracle procese
-      const freshReservation = await oracle.getReservation(internalId);
-      confirmationId = findConfirmationId(freshReservation);
+      console.log(`🔍 No hallado a la primera. Re-consultando reserva ${internalId}...`);
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const freshRes = await oracle.getReservation(internalId);
+      confirmationId = findConfirmationId(freshRes);
     }
-
-    console.log(`✅ ID Interno: ${internalId}`);
-    console.log(`✅ Confirmation Number: ${confirmationId || 'Mantiene anterior'}`);
-
-    // --------------------------------------------------------------------------
-    // 🔄 5. VUELTA A HUBSPOT
-    // --------------------------------------------------------------------------
+    console.log(`✅ ID Interno: ${internalId} | Confirmation: ${confirmationId || 'Mantiene'}`);
+    // 🔄 6. ACTUALIZACIÓN FINAL EN HUBSPOT
     await hubspot.updateDeal(dealId, {
       "id_oracle": internalId,
       "numero_de_reserva": String(confirmationId || currentConfirmation || internalId),
-      "id_synxis": "SINCRONIZADO_OK"
+      "id_synxis": "SINCRO_MULTI_PAX_OK"
     });
-
-    console.log(`✨ Sincronización finalizada para ${dealId}.`);
-    return res.status(200).json({ success: true, confirmationId: confirmationId || internalId });
-
+    console.log(`✨ ÉXITO: Negocio ${dealId} sincronizado con ${guestProfiles.length} huéspedes.`);
+    return res.status(200).json({ success: true, guestsSynced: guestProfiles.length });
   } catch (error: any) {
-    console.error("❌ Error en Deal Webhook:", error.message);
+    console.error("❌ Error en Multi-Guest Deal Webhook:", error.message);
     return res.status(500).json({ error: error.message });
   }
 });
