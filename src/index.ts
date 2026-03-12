@@ -64,10 +64,14 @@ app.get("/", (req: Request, res: Response) => {
 app.post("/webhook/hubspot/deal", async (req: Request, res: Response) => {
   console.log("\n📥 [RECIBIDO] Petición de Negocio Multi-Huésped...");
   try {
-    const payload = req.body;
-    if (!payload.objectId) return res.status(400).json({ error: "Falta objectId" });
-    const dealId = String(payload.objectId);
-    const props = payload.properties;
+    const events = Array.isArray(req.body) ? req.body : [req.body];
+    if (events.length === 0) return res.status(200).send("OK");
+    // Tomamos el ID del negocio del primer evento
+    const dealId = String(events[0].objectId);
+    console.log(`\n📥 [RECIBIDO] Webhook de HubSpot para Negocio ${dealId}...`);
+    // descargamos la ficha fresca y completa desde HubSpot.
+    const fullDeal = await hubspot.getDealById(dealId);
+    const props = fullDeal.properties;
     // 🕵️ Datos previos en HubSpot
     const existingOracleId = props.id_oracle?.value || props.id_oracle;
     const currentConfirmation = props.numero_de_reserva?.value || props.numero_de_reserva;
@@ -78,7 +82,6 @@ app.post("/webhook/hubspot/deal", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "El negocio no tiene contactos asociados." });
     }
     // 🔍 2. HANDSHAKE MULTIPLE: Asegurar que cada contacto tenga ID en Oracle
-    // 'assoc' está tipado correctamente desde HubSpotClient
     const guestProfiles = await Promise.all(associations.map(async (assoc: any) => {
       const hsContact = await hubspot.getContactById(assoc.contactId);
       let oracleId = hsContact.id_oracle;
@@ -104,11 +107,25 @@ app.post("/webhook/hubspot/deal", async (req: Request, res: Response) => {
     const oracleJsonPayload = mapHubSpotReservationToOracle(props, guestProfiles);
     let internalId: string;
     let rawResponse: any;
-    // 🚀 4. CREAR O ACTUALIZAR
+
+    // 🚀 4. CREAR O ACTUALIZAR-------------------------------------------------------------------
+    console.log("📤 [DEBUG] Payload enviado a Oracle:", JSON.stringify(oracleJsonPayload, null, 2));
     if (existingOracleId && existingOracleId !== "" && existingOracleId !== "undefined") {
       console.log(`🔄 Actualizando reserva existente ${existingOracleId}...`);
+      // 🔥 EL FORMATO PERFECTO: "reservations" es DIRECTAMENTE un Array [ ]
       const updatePayload = {
-        reservation: oracleJsonPayload.reservations.reservation[0]
+        reservations: [ // <-- Fíjate que aquí abre un corchete directo, sin "reservation"
+          {
+            reservationIdList: [
+              {
+                type: "Reservation",
+                id: String(existingOracleId)
+              }
+            ],
+            // Esparcimos los huéspedes, fechas y pagos que armó el mapper
+            ...oracleJsonPayload.reservations.reservation[0]
+          }
+        ]
       };
       rawResponse = await oracle.updateReservation(String(existingOracleId), updatePayload);
       internalId = String(existingOracleId);
@@ -118,7 +135,7 @@ app.post("/webhook/hubspot/deal", async (req: Request, res: Response) => {
       internalId = String(createResponse.id);
       rawResponse = createResponse.raw;
     }
-    // 🕵️ 5. RASTREADOR Y RE-INTENTO (Para capturar los 9 dígitos)
+    // 🕵️ 5. RASTREADOR Y RE-INTENTO (Para capturar los 9 dígitos)--------------------------------------
     let confirmationId = findConfirmationId(rawResponse);
     if (!confirmationId) {
       console.log(`🔍 No hallado a la primera. Re-consultando reserva ${internalId}...`);
@@ -127,12 +144,12 @@ app.post("/webhook/hubspot/deal", async (req: Request, res: Response) => {
       confirmationId = findConfirmationId(freshRes);
     }
     console.log(`✅ ID Interno: ${internalId} | Confirmation: ${confirmationId || 'Mantiene'}`);
-    // 🔄 6. ACTUALIZACIÓN FINAL EN HUBSPOT
+    // 🔄 ACTUALIZACIÓN FINAL EN HUBSPOT (Deal / Negocio)
     await hubspot.updateDeal(dealId, {
       "id_oracle": internalId,
-      "numero_de_reserva": String(confirmationId || currentConfirmation || internalId),
+      "numero_de_reserva_": String(confirmationId || currentConfirmation || internalId),
       "id_synxis": "SINCRO_MULTI_PAX_OK"
-    });
+    }as any);
     console.log(`✨ ÉXITO: Negocio ${dealId} sincronizado con ${guestProfiles.length} huéspedes.`);
     return res.status(200).json({ success: true, guestsSynced: guestProfiles.length });
   } catch (error: any) {
@@ -177,8 +194,7 @@ app.post("/webhook/oracle/reservation", async (req: Request, res: Response) => {
     const contact = await hubspot.findContactByOracleId(String(profileId));
     if (contact) {
       await hubspot.updateContact(contact.id, {
-        "numero_de_reserva": String(data.confirmationId || data.reservationId),
-        "estado_de_reserva": data.status || "Reserved"
+        "id_oracle": String(profileId)
       });
     }
     res.status(200).json({ success: true });

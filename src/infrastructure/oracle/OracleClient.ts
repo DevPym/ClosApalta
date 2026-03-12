@@ -170,6 +170,8 @@ export class OracleClient {
 
     } catch (error: any) {
       console.error("❌ [Oracle] Fallo al crear la reserva");
+      const detalles = error.response?.data ? JSON.stringify(error.response.data, null, 2) : error.message;
+      console.error("❌ [Oracle] Detalle exacto del rechazo:", detalles);
       throw new Error(`Fallo en Oracle al crear reserva: ${error.message}`);
     }
   }

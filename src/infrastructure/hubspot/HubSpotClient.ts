@@ -151,18 +151,35 @@ export class HubSpotClient {
   // Dentro de la clase HubSpotClient
   async getAssociatedContacts(dealId: string) {
     try {
-      const response = await this.client.crm.deals.associationsApi.getAll(dealId, 'contacts');
-      const results = response.results as HubSpotAssociation[]; // Cast de tipo
+      // 🚀 Usamos la versión 4 (v4) de la API de HubSpot, que es la experta en Etiquetas (Labels)
+      const response = await this.client.crm.associations.v4.basicApi.getPage(
+        "deals",     // Objeto de origen
+        dealId,      // ID del negocio
+        "contacts"   // Objeto de destino (lo que queremos buscar)
+      );
 
-      return results.map((assoc: HubSpotAssociation) => ({
-        contactId: assoc.id,
-        labels: assoc.types
-          .map((t) => t.label)
-          .filter((l): l is string => !!l) // Filtro para asegurar que 'l' es string y no undefined
+      // Transformamos la respuesta al formato que necesita nuestro index.ts
+      return response.results.map((assoc: any) => ({
+        contactId: String(assoc.toObjectId), // En v4, el ID del destino viene como 'toObjectId'
+        labels: assoc.associationTypes
+          .map((t: any) => t.label)
+          .filter((l: any): l is string => !!l) // Filtramos para quedarnos solo con los textos válidos
       }));
+
     } catch (error: any) {
       console.error("❌ Error al obtener contactos asociados:", error.message);
       return [];
     }
+  }
+
+  // En HubSpotClient.ts
+  async getDealById(dealId: string) {
+    // Traemos el negocio con TODAS las propiedades que a Opera le importan
+    const response = await this.client.crm.deals.basicApi.getById(dealId, [
+      "check_in", "check_out", "room_type", "fuente_de_reserva",
+      "tipo_de_tarifa", "tipo_de_pago", "cantidad_de_habitaciones",
+      "numero_de_huespedes", "id_oracle", "numero_de_reserva"
+    ]);
+    return response;
   }
 }
