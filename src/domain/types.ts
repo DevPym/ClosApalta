@@ -31,11 +31,18 @@ export interface UnifiedReservation {
   fuente_de_reserva: string;
   estado_de_reserva: string;
   numero_de_reserva: string;
-  habitacion: string;
+  habitacion: string;         
+  room_type?: string;         
   tipo_de_tarifa: string;
+  tipo_de_pago?: string;      
+  cantidad_de_habitaciones?: string; 
+  amount?: string;            
   numero_de_vuelo: string;
   destino_anterior: string;
   transporte: string;
   nombre_chofer_clos_apalta: string;
   numero_de_noches_de_estancia: string;
+  es_pseudo_room?: boolean;
+  agencia_de_viajes?: string;
+  id_synxis?: string; 
 }

@@ -1,6 +1,5 @@
 import axios from "axios";
 import { config } from "../../config/index.js";
-import { profile } from "node:console";
 
 export class OracleClient {
   private accessToken: string | null = null;
@@ -42,11 +41,11 @@ export class OracleClient {
     let body: any;
 
     try {
-      console.log(`📡 [Oracle] Creación final (estructura validada por OpenAPI) para: ${profileData.firstName} ${profileData.lastName}`);
+      console.log(`📡 [Oracle] Creación final para: ${profileData.firstName} ${profileData.lastName}`);
 
       body = {
         profileDetails: {
-          profileType: "Guest", // ✅ OBLIGATORIO: Define que es un huésped
+          profileType: "Guest",
           customer: {
             personName: [{
               givenName: (profileData.firstName || "Huesped").trim(),
@@ -58,11 +57,10 @@ export class OracleClient {
           emails: {
             emailInfo: [{
               email: {
-                type: "EMAIL", // 🎯 CORRECCIÓN CLAVE: Ahora está DENTRO del objeto email
+                type: "EMAIL",
                 emailAddress: profileData.email.trim(),
                 primaryInd: true
               }
-              // Ya no hay "type" ni "id" aquí afuera, lo que elimina el error de Value ID
             }]
           },
           profileAccessType: {
@@ -81,25 +79,17 @@ export class OracleClient {
       const oracleId = response.data?.profileIdList?.[0]?.id ||
         response.headers.location?.split('/').pop();
 
-      console.log(`✅ ¡ÉXITO TOTAL! Perfil creado en Oracle. ID: ${oracleId}`);
+      console.log(`✅ Perfil creado en Oracle. ID: ${oracleId}`);
       return oracleId;
     } catch (error: any) {
-      console.error("❌ Error en createGuestProfile:");
-      if (error.response?.data) {
-        console.error("📋 Respuesta de Oracle:", JSON.stringify(error.response.data, null, 2));
-      }
-      console.error("📦 Payload enviado:", JSON.stringify(body, null, 2));
+      console.error("❌ Error en createGuestProfile");
       throw error;
     }
   }
 
-  // ------------------------------------------------------------------------
-  // ✏️ UPDATE: Actualizar Huésped en Oracle
-  // ------------------------------------------------------------------------
   async updateGuestProfile(oracleId: string, properties: Record<string, any>) {
     if (!this.accessToken) await this.authenticate();
 
-    // Oracle siempre requiere el apellido para un Guest
     if (!properties.lastname) {
       console.log("⚠️ Update cancelado: Falta el apellido obligatorio.");
       return;
@@ -108,7 +98,7 @@ export class OracleClient {
     try {
       const body: any = {
         profileDetails: {
-          profileType: "Guest", // ✅ LLAVE MAESTRA OBLIGATORIA
+          profileType: "Guest",
           customer: {
             personName: [{
               givenName: (properties.firstname || "").trim(),
@@ -120,12 +110,11 @@ export class OracleClient {
         }
       };
 
-      // Si el webhook detectó cambio de email, lo agregamos con la estructura estricta
       if (properties.email) {
         body.profileDetails.emails = {
           emailInfo: [{
             email: {
-              type: "EMAIL", // ✅ Adentro del objeto email
+              type: "EMAIL",
               emailAddress: properties.email.trim(),
               primaryInd: true
             }
@@ -140,57 +129,7 @@ export class OracleClient {
       );
       console.log(`✅ [Oracle] Perfil ${oracleId} actualizado correctamente.`);
     } catch (error: any) {
-      console.error("❌ Error en updateGuestProfile:");
-      console.error("📋 Respuesta:", JSON.stringify(error.response?.data || error.message, null, 2));
-    }
-  }
-
-  // ------------------------------------------------------------------------
-  // 🗑️ DELETE: Inactivar Huésped en Oracle (Desde HubSpot a Oracle)
-  // ------------------------------------------------------------------------
-  async inactivateGuestProfile(oracleId: string) {
-    if (!this.accessToken) await this.authenticate();
-    try {
-      console.log(`🗑️ [Oracle] Solicitud para inactivar perfil ${oracleId} recibida.`);
-
-      /* // 🚨 CÓDIGO COMENTADO HASTA DEFINIR REGLAS DE NEGOCIO 🚨
-      // Para inactivar en OPERA, usualmente se envía el estado "active: false" 
-      // o se actualiza el campo de estado del perfil.
-      
-      const body = {
-        profileDetails: {
-          profileType: "Guest",
-          markAsInactive: true, // Esto depende de la versión exacta de la API
-          statusCode: "INACTIVE"
-        }
-      };
-
-      await axios.put(
-        `${config.oracle.baseUrl}/crm/v1/profiles/${oracleId}`, 
-        body, 
-        { headers: this.getHeaders() }
-      );
-      console.log(`✅ [Oracle] Perfil ${oracleId} marcado como inactivo.`);
-      */
-
-      console.log(`ℹ️ [Oracle] Acción de inactivación ignorada por el momento (Código comentado).`);
-    } catch (error: any) {
-      console.error(`❌ [Oracle] Error al inactivar perfil ${oracleId}:`, error.message);
-    }
-  }
-
-  async getGuestProfile(profileId: string): Promise<any> {
-    if (!this.accessToken) await this.authenticate();
-    try {
-      const response = await axios.get(
-        `${config.oracle.baseUrl}/crm/v1/profiles/${profileId}`,
-        { headers: this.getHeaders() }
-      );
-      console.log(`✅ [Oracle] Perfil ${profileId} consultado con éxito.`);
-      return response.data;
-    } catch (error: any) {
-      console.error(`❌ [Oracle] Error al consultar perfil ${profileId}:`, error.message);
-      throw error;
+      console.error("❌ Error en updateGuestProfile");
     }
   }
 
@@ -206,6 +145,69 @@ export class OracleClient {
     } catch (error: any) {
       console.error(`❌ Error al eliminar perfil ${profileId}:`, error.message);
       return false;
+    }
+  }
+
+  // ========================================================================
+  // 🛏️ RESERVAS (DEALS)
+  // ========================================================================
+
+  async createReservationInOracle(reservationPayload: any): Promise<any> {
+    if (!this.accessToken) await this.authenticate();
+
+    const url = `${config.oracle.baseUrl}/rsv/v1/hotels/${config.oracle.hotelId}/reservations`;
+
+    try {
+      console.log("📡 [Oracle] Intentando inyectar reserva...");
+
+      const response = await axios.post(url, reservationPayload, {
+        headers: this.getHeaders(),
+      });
+
+      const resId = response.data?.reservationIdList?.[0]?.id || response.headers.location?.split('/').pop() || "Desconocido";
+      console.log(`✅ [Oracle] Reserva creada con éxito. ID: ${resId}`);
+      return { id: resId, raw: response.data };
+
+    } catch (error: any) {
+      console.error("❌ [Oracle] Fallo al crear la reserva");
+      throw new Error(`Fallo en Oracle al crear reserva: ${error.message}`);
+    }
+  }
+
+  /**
+   * 🔄 UPDATE RESERVATION: Actualiza fechas, pax o habitación en OPERA
+   */
+  async updateReservation(reservationId: string, data: any): Promise<any> {
+    if (!this.accessToken) await this.authenticate();
+
+    // Importante: Usamos /rsv/v1/ que es el endpoint que ya te funciona para POST
+    const url = `${config.oracle.baseUrl}/rsv/v1/hotels/${config.oracle.hotelId}/reservations/${reservationId}`;
+
+    try {
+      console.log(`📡 [Oracle] Actualizando reserva ${reservationId}...`);
+
+      const response = await axios.put(url, data, {
+        headers: this.getHeaders(),
+      });
+
+      console.log(`✅ [Oracle] Reserva ${reservationId} actualizada con éxito.`);
+      return response.data;
+    } catch (error: any) {
+      const detail = error.response?.data?.detail || error.message;
+      console.error("❌ Error en updateReservation:", detail);
+      throw new Error(`Fallo al actualizar reserva en Oracle: ${detail}`);
+    }
+  }
+  // En OracleClient.ts
+  async getReservation(reservationId: string): Promise<any> {
+    if (!this.accessToken) await this.authenticate();
+    const url = `${config.oracle.baseUrl}/rsv/v1/hotels/${config.oracle.hotelId}/reservations/${reservationId}`;
+    try {
+      const response = await axios.get(url, { headers: this.getHeaders() });
+      return response.data;
+    } catch (error: any) {
+      console.error(`❌ Error al consultar reserva ${reservationId}:`, error.message);
+      return null;
     }
   }
 }

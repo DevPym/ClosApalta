@@ -4,8 +4,8 @@ import { config } from "./config/index.js";
 import { OracleClient } from "./infrastructure/oracle/OracleClient.js";
 import { HubSpotClient } from "./infrastructure/hubspot/HubSpotClient.js";
 import {
-  mapOracleReservation,
   mapOracleToUnified,
+  mapHubSpotReservationToOracle
 } from "./application/mappers.js";
 import { OracleStreamer } from "./infrastructure/oracle/OracleStreamer.js";
 
@@ -15,178 +15,189 @@ app.use(express.json());
 // Clientes e Instancias
 const oracle = new OracleClient();
 const hubspot = new HubSpotClient();
-// 🔥 NUEVO: Inicializar el escuchador de WebSockets
+
+// 🔥 INICIALIZAR EL ESCUCHADOR DE WEBSOCKETS (OHIP Streaming)
 const oracleStreamer = new OracleStreamer(oracle, async (oracleEventData) => {
   try {
-    // Reutilizamos tu lógica exacta del webhook
     const unifiedContact = mapOracleToUnified(oracleEventData);
-    const result = await hubspot.syncContact(unifiedContact);
-    console.log(`✅ [Streamer] Contacto sincronizado a HubSpot. ID: ${(result as any)?.id}`);
+    await hubspot.syncContact(unifiedContact);
+    console.log(`✅ [Streamer] Contacto sincronizado a HubSpot.`);
   } catch (error: any) {
-    console.error("❌ [Streamer] Error sincronizando evento a HubSpot:", error.message);
+    console.error("❌ [Streamer] Error sincronizando evento:", error.message);
   }
 });
 
-// Puedes iniciar el streamer justo antes de app.listen()
-// oracleStreamer.connect(); // 🚨 DESCOMENTAR CUANDO ORACLE ACTIVE EL TICKET
-
-// Constantes de Eventos HubSpot
-const EVENT_CREATION = "contact.creation";
-const EVENT_PROPERTY_CHANGE = "contact.propertyChange";
-const EVENT_DELETION = "contact.deletion";
+// oracleStreamer.connect(); // Activar cuando el ticket de Oracle esté listo
 
 // ----------------------------------------------------------------------------------------
-// 🩺 HEALTH CHECK (Para monitoreo del servidor)
+// 🕵️ FUNCIÓN RASTREADORA UNIVERSAL
+// Busca el Confirmation Number (9 dígitos) en cualquier rincón del JSON de Oracle
+// ----------------------------------------------------------------------------------------
+function findConfirmationId(obj: any): string | undefined {
+  if (!obj || typeof obj !== 'object') return undefined;
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findConfirmationId(item);
+      if (found) return found;
+    }
+  }
+  if (obj.type?.toString().toUpperCase() === 'CONFIRMATION' && obj.id) {
+    return String(obj.id);
+  }
+  for (const key in obj) {
+    const found = findConfirmationId(obj[key]);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+// ----------------------------------------------------------------------------------------
+// 🩺 HEALTH CHECK
 // ----------------------------------------------------------------------------------------
 app.get("/", (req: Request, res: Response) => {
-  res.json({ status: "online", project: "Puente Clos Apalta", version: "1.2.0" });
+  res.json({ status: "online", project: "Puente Clos Apalta", version: "1.5.0" });
 });
 
 // ----------------------------------------------------------------------------------------
-// 🟠 WEBHOOK DE HUBSPOT (CRM -> Oracle)
+// 🟠 WEBHOOK DE RESERVAS (DEALS) - CREACIÓN Y ACTUALIZACIÓN
 // ----------------------------------------------------------------------------------------
-app.post("/webhook/hubspot", async (req: Request, res: Response) => {
-  const events = req.body;
-  if (!Array.isArray(events)) return res.status(400).send("Formato inválido");
-
-  console.log(`\n📩 [WEBHOOK HUBSPOT] ${events.length} evento(s) recibido(s)`);
-
+app.post("/webhook/hubspot/deal", async (req: Request, res: Response) => {
+  console.log("\n📥 [RECIBIDO] Petición de Negocio desde HubSpot...");
   try {
-    for (const event of events) {
-      const { subscriptionType, objectId, propertyName, propertyValue } = event;
+    const payload = req.body;
+    if (!payload.objectId) return res.status(400).json({ error: "Falta objectId" });
 
-      // 🛡️ PROTECCIÓN INICIAL: Envolvemos Creación y Edición
-      // para evitar que un 404 de un contacto borrado detenga todo el proceso.
-      try {
-        // ✨ 1. CREACIÓN (Handshake inicial)
-        // ✨ 1. CREACIÓN (Handshake inicial)
-        if (subscriptionType === EVENT_CREATION) {
-          console.log(`🆕 Handshake: Iniciando para HS ${objectId}`);
-          const hsData = await hubspot.getContactById(objectId);
+    const dealId = String(payload.objectId);
+    const props = payload.properties;
 
-          // 🛡️ PROTECCIÓN ANTI-ECO: Si ya tiene ID de Oracle, vino de allá. No lo duplicamos.
-          if (hsData.id_oracle) {
-            console.log(`ℹ️ Ignorando creación: HS ${objectId} ya tiene ID Oracle (${hsData.id_oracle}). El perfil se originó en OPERA.`);
-          } else {
-            const newOracleId = await oracle.createGuestProfile(hsData);
-            await hubspot.updateOracleId(objectId, newOracleId);
-          }
-        }
+    // 🕵️ Verificar si ya existe en Oracle
+    const existingOracleId = props.id_oracle?.value || props.id_oracle;
+    const currentConfirmation = props.numero_de_reserva?.value || props.numero_de_reserva;
 
-        // ✏️ 2. EDICIÓN (Sincronización de cambios)
-        else if (subscriptionType === EVENT_PROPERTY_CHANGE) {
-          if (propertyName === "id_oracle") continue;
+    // 🔍 1. Buscar contacto asociado
+    const contactId = await hubspot.getContactIdFromDeal(dealId);
+    if (!contactId) return res.status(400).json({ error: "Sin contacto asociado" });
 
-          console.log(`✏️ Cambio detectado: ${propertyName} = ${propertyValue}`);
-          const oracleId = await hubspot.getOracleIdFromContact(objectId);
+    const hsContactData = await hubspot.getContactById(contactId);
+    let oracleProfileId = hsContactData.id_oracle;
 
-          if (oracleId) {
-            const fullContact = await hubspot.getContactById(objectId);
-            await oracle.updateGuestProfile(oracleId, {
-              firstname: fullContact.firstName,
-              lastname: fullContact.lastName
-            });
-          }
-        }
-      } catch (innerError: any) {
-        // Si el error es un 404, significa que el contacto ya no existe en HS
-        if (innerError.message.includes("404")) {
-          console.log(`ℹ️ Evento ignorado: El contacto ${objectId} ya no existe en HubSpot.`);
-          continue; // Salta al siguiente evento del bucle 'for'
-        }
-        // Si es otro tipo de error (ej: error 400 de Oracle), lo lanzamos hacia afuera
-        throw innerError;
-      }
-
-      // 🗑️ 3. BORRADO (Ya tiene su propia protección interna en tu código)
-      if (subscriptionType === EVENT_DELETION) {
-        console.log(`🗑️ Borrado detectado en HS: ${objectId}. Limpiando...`);
-        try {
-          const oracleId = await hubspot.getOracleIdFromContact(objectId);
-          if (oracleId) {
-            await oracle.deleteGuestProfile(oracleId);
-            console.log(`✅ Vínculo Oracle ${oracleId} eliminado.`);
-          }
-        } catch (e: any) {
-          console.log(`ℹ️ Finalizado: No se pudo consultar el ID de Oracle porque el contacto ${objectId} ya no existe.`);
-        }
-      }
+    if (!oracleProfileId) {
+      oracleProfileId = await oracle.createGuestProfile(hsContactData);
+      await hubspot.updateOracleId(contactId, oracleProfileId);
     }
-    res.status(200).send("EVENTOS_RECIBIDOS");
+
+    // 🏨 2. Mapear datos
+    const oracleJsonPayload = mapHubSpotReservationToOracle(props, {
+      properties: { id_oracle: oracleProfileId }
+    });
+
+    let internalId: string;
+    let rawResponse: any;
+
+    // --------------------------------------------------------------------------
+    // 🚀 3. EJECUCIÓN: ¿ACTUALIZAR O CREAR?
+    // --------------------------------------------------------------------------
+    if (existingOracleId && existingOracleId !== "" && existingOracleId !== "undefined") {
+      console.log(`🔄 Sincronizando: Actualizando reserva existente ${existingOracleId}...`);
+
+      const updatePayload = {
+        reservations: {
+          reservation: oracleJsonPayload.reservations.reservation[0] // Objeto único para PUT
+        }
+      };
+
+      rawResponse = await oracle.updateReservation(String(existingOracleId), updatePayload);
+      internalId = String(existingOracleId);
+    } else {
+      console.log(`📡 Sincronizando: Creando NUEVA reserva en Oracle...`);
+      const createResponse = await oracle.createReservationInOracle(oracleJsonPayload);
+      internalId = String(createResponse.id);
+      rawResponse = createResponse.raw;
+    }
+
+    // --------------------------------------------------------------------------
+    // 🕵️ 4. EXTRACCIÓN CON RE-INTENTO (Para asegurar los 9 dígitos)
+    // --------------------------------------------------------------------------
+    let confirmationId = findConfirmationId(rawResponse);
+
+    if (!confirmationId) {
+      console.log(`🔍 No hallado a la primera. Re-consultando reserva ${internalId} en Oracle...`);
+      await new Promise(resolve => setTimeout(resolve, 600)); // Pequeña espera para que Oracle procese
+      const freshReservation = await oracle.getReservation(internalId);
+      confirmationId = findConfirmationId(freshReservation);
+    }
+
+    console.log(`✅ ID Interno: ${internalId}`);
+    console.log(`✅ Confirmation Number: ${confirmationId || 'Mantiene anterior'}`);
+
+    // --------------------------------------------------------------------------
+    // 🔄 5. VUELTA A HUBSPOT
+    // --------------------------------------------------------------------------
+    await hubspot.updateDeal(dealId, {
+      "id_oracle": internalId,
+      "numero_de_reserva": String(confirmationId || currentConfirmation || internalId),
+      "id_synxis": "SINCRONIZADO_OK"
+    });
+
+    console.log(`✨ Sincronización finalizada para ${dealId}.`);
+    return res.status(200).json({ success: true, confirmationId: confirmationId || internalId });
+
   } catch (error: any) {
-    // Este catch solo atrapará errores críticos o fallos de Oracle que no sean 404 de HS
-    console.error("❌ [WEBHOOK HUBSPOT] Error crítico:", error.message);
-    res.status(500).send("ERROR_INTERNO");
+    console.error("❌ Error en Deal Webhook:", error.message);
+    return res.status(500).json({ error: error.message });
   }
 });
 
 // ----------------------------------------------------------------------------------------
-// 🔄 RUTA DE SINCRONIZACIÓN MANUAL (HubSpot -> Oracle)
+// 🔄 OTRAS RUTAS (PERFILES Y SYNC MANUAL)
 // ----------------------------------------------------------------------------------------
 app.get("/sync-to-oracle/:hsId", async (req: Request, res: Response) => {
-  const { hsId } = req.params as { hsId: string };
-  console.log(`\n🔄 [MANUAL SYNC] HubSpot ID: ${hsId} -> Oracle`);
-
   try {
-    const hsContact = await hubspot.getContactById(hsId);
-    if (!hsContact) return res.status(404).json({ error: "No encontrado en HubSpot" });
-
-    const oracleId = hsContact.id_oracle || await hubspot.getOracleIdFromContact(hsId);
-
-    if (oracleId) {
-      console.log(`📌 Actualizando perfil existente: ${oracleId}`);
-      await oracle.updateGuestProfile(oracleId, {
-        firstname: hsContact.firstName,
-        lastname: hsContact.lastName
-      });
-      res.json({ message: "Sincronizado (Update)", oracleId });
-    } else {
-      console.log(`📌 Sin vínculo previo. Creando nuevo perfil...`);
-      const newOracleId = await oracle.createGuestProfile(hsContact);
-      await hubspot.updateOracleId(hsId, newOracleId);
-      res.json({ message: "Sincronizado (Create)", oracleId: newOracleId });
+    const hsId = req.params.hsId;
+    if (!hsId) return res.status(400).json({ error: "Falta ID" });
+    if (!hsId || typeof hsId !== "string") {
+      return res.status(400).json({ error: "ID de HubSpot no válido o mal formateado" });
     }
+    const hsContact = await hubspot.getContactById(hsId);
+    const newOracleId = await oracle.createGuestProfile(hsContact);
+    await hubspot.updateOracleId(hsId, newOracleId);
+    res.json({ success: true, newOracleId });
   } catch (error: any) {
-    console.error("❌ Error en Sync Manual:", error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-// ----------------------------------------------------------------------------------------
-// 🔵 WEBHOOKS DE ORACLE (Oracle -> HubSpot)
-// ----------------------------------------------------------------------------------------
-
-// Perfiles
 app.post('/webhook/oracle', async (req: Request, res: Response) => {
-  console.log('\n🔔 [WEBHOOK ORACLE] ¡Cambio de perfil detectado!');
   try {
     const unifiedContact = mapOracleToUnified(req.body);
-    const result = await hubspot.syncContact(unifiedContact);
-    res.status(200).json({ success: true, hubspotId: (result as any)?.id });
-  } catch (error: any) {
-    console.error('❌ [WEBHOOK ORACLE] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Reservas
-app.post('/webhook/oracle/reservation', async (req: Request, res: Response) => {
-  console.log('\n🛎️ [WEBHOOK RESERVAS] ¡Actualización de estadía!');
-  try {
-    const unifiedRes = mapOracleReservation(req.body);
-    await hubspot.syncReservationToContact(unifiedRes);
+    await hubspot.syncContact(unifiedContact);
     res.status(200).json({ success: true });
   } catch (error: any) {
-    console.error('❌ [WEBHOOK RESERVAS] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 🚀 INICIO DEL SERVIDOR
+app.post("/webhook/oracle/reservation", async (req: Request, res: Response) => {
+  try {
+    const data = req.body;
+    const profileId = data.profileId || data.guestDetails?.profileId;
+    const contact = await hubspot.findContactByOracleId(String(profileId));
+    if (contact) {
+      await hubspot.updateContact(contact.id, {
+        "numero_de_reserva": String(data.confirmationId || data.reservationId),
+        "estado_de_reserva": data.status || "Reserved"
+      });
+    }
+    res.status(200).json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: "Error en el puente" });
+  }
+});
+
+// 🚀 INICIO
 app.listen(config.server.port, () => {
   console.log("---------------------------------------------------------");
   console.log(`🚀 PUENTE ONLINE | Puerto: ${config.server.port}`);
-  console.log(`🛡️ Escudo App ID: ${config.hubspot.appId}`);
   console.log("** Proyecto Clos Apalta - Sincronización Bidireccional **");
   console.log("---------------------------------------------------------");
 });
