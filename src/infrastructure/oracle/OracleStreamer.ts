@@ -5,60 +5,64 @@ import { OracleClient } from "./OracleClient.js";
 
 export class OracleStreamer {
     private ws: WebSocket | null = null;
-    private oracleClient: OracleClient;
+    private readonly oracleClient: OracleClient;
     private pingInterval: NodeJS.Timeout | null = null;
-    private onMessageCallback: (event: any) => void;
+    private readonly onMessageCallback: (event: any) => void;
 
     constructor(oracleClient: OracleClient, onMessageCallback: (event: any) => void) {
         this.oracleClient = oracleClient;
         this.onMessageCallback = onMessageCallback;
     }
 
-    // 🔐 Regla de Oracle: El AppKey debe enviarse como un Hash SHA256 en la URL
+    // 🔐 Según especificación OHIP: el AppKey se envía como hash SHA256 en la URL
     private getHashedAppKey(): string {
-        const hash = crypto.createHash("sha256");
-        hash.update(config.oracle.appKey);
-        return hash.digest("hex").toLowerCase();
+        return crypto.createHash("sha256")
+            .update(config.oracle.appKey)
+            .digest("hex")
+            .toLowerCase();
     }
 
-    async connect() {
+    async connect(): Promise<void> {
         console.log("🔌 [OracleStreamer] Iniciando conexión WebSocket...");
 
         try {
-            // 1. Aseguramos tener un Token OAuth válido
             await this.oracleClient.authenticate();
-            const token = (this.oracleClient as any).accessToken; // Acceso interno al token
+            // ✅ FIX #11: Usamos el método público en vez de acceder con "as any"
+            const token = this.oracleClient.getAccessToken();
 
-            // 2. Construimos la URL de Streaming (Suele ser wss:// en lugar de https://)
+            if (!token) {
+                throw new Error("[OracleStreamer] No se pudo obtener el token de acceso.");
+            }
+
             const wssBaseUrl = config.oracle.baseUrl.replace("https://", "wss://");
-            // La ruta exacta de streaming según OHIP
             const streamUrl = `${wssBaseUrl}/streaming/v1?appKey=${this.getHashedAppKey()}`;
 
-            // 3. Abrimos la conexión con el subprotocolo requerido por Oracle
             this.ws = new WebSocket(streamUrl, "graphql-transport-ws", {
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
+                headers: { Authorization: `Bearer ${token}` },
             });
 
             this.ws.on("open", () => {
-                console.log("✅ [OracleStreamer] Conexión abierta. Iniciando Handshake GraphQL...");
-                // Protocolo GraphQL-WS: Enviar connection_init
+                console.log("✅ [OracleStreamer] Conexión abierta. Iniciando handshake GraphQL...");
                 this.ws?.send(JSON.stringify({ type: "connection_init" }));
             });
 
-            this.ws.on("message", (data: string) => {
-                const message = JSON.stringify(data.toString());
-                this.handleMessage(JSON.parse(data.toString()));
+            this.ws.on("message", (data: WebSocket.RawData) => {
+                // ✅ FIX #12: Eliminada la variable "message" que se declaraba sin usarse.
+                //    data.toString() se llama una sola vez.
+                try {
+                    this.handleMessage(JSON.parse(data.toString()));
+                } catch (parseError: any) {
+                    console.error("❌ [OracleStreamer] Error al parsear mensaje:", parseError.message);
+                }
             });
 
-            this.ws.on("close", (code, reason) => {
-                console.log(`⚠️ [OracleStreamer] Conexión cerrada. Código: ${code}. Razón: ${reason}`);
+            this.ws.on("close", (code: number, reason: Buffer) => {
+                console.warn(`⚠️ [OracleStreamer] Conexión cerrada. Código: ${code}. Razón: ${reason.toString()}`);
                 this.stopPing();
-                // Lógica de reconexión automática en el futuro
+                // TODO: Implementar reconexión automática con backoff exponencial
             });
 
-            this.ws.on("error", (error) => {
+            this.ws.on("error", (error: Error) => {
                 console.error("❌ [OracleStreamer] Error en WebSocket:", error.message);
             });
 
@@ -67,28 +71,27 @@ export class OracleStreamer {
         }
     }
 
-    private handleMessage(msg: any) {
+    private handleMessage(msg: any): void {
         switch (msg.type) {
             case "connection_ack":
-                console.log("✅ [OracleStreamer] Servidor aceptó la conexión. Iniciando latidos (Pings).");
+                console.log("✅ [OracleStreamer] Servidor aceptó la conexión. Iniciando latidos (pings).");
                 this.startPing();
                 this.subscribeToEvents();
                 break;
 
             case "pong":
-                // El servidor respondió nuestro ping, la conexión está sana
+                // El servidor respondió al ping: conexión activa
                 break;
 
             case "next":
-                // ¡AQUÍ LLEGAN LOS EVENTOS DE OPERA! (Perfiles, Reservas)
-                console.log("🔔 [WEBHOOK ORACLE STREAM] ¡Evento recibido en tiempo real!");
-                if (msg.payload && msg.payload.data) {
+                console.log("🔔 [OracleStreamer] ¡Evento recibido en tiempo real!");
+                if (msg.payload?.data) {
                     this.onMessageCallback(msg.payload.data);
                 }
                 break;
 
             case "error":
-                console.error("❌ [OracleStreamer] Error desde el servidor:", msg.payload);
+                console.error("❌ [OracleStreamer] Error desde el servidor:", JSON.stringify(msg.payload));
                 break;
 
             case "complete":
@@ -96,38 +99,47 @@ export class OracleStreamer {
                 break;
 
             default:
-                console.log("ℹ️ [OracleStreamer] Mensaje desconocido:", msg.type);
+                console.log(`ℹ️ [OracleStreamer] Mensaje desconocido recibido. Tipo: "${msg.type}"`);
         }
     }
 
-    private subscribeToEvents() {
-        // Aquí enviamos la query GraphQL para suscribirnos a los eventos de la cadena
+    private subscribeToEvents(): void {
         const subscribeQuery = {
             id: "closapalta-sub-1",
             type: "subscribe",
             payload: {
-                query: `subscription { 
-          businessEvents(chainCode: "CAR") { 
-            profileDetails { customer { personName { givenName surname nameType } } emails { emailInfo { email { emailAddress primaryInd } type } } }
-            profileIdList { type id }
-          } 
-        }`
+                query: `subscription {
+          businessEvents(chainCode: "CAR") {
+            profileDetails {
+              customer {
+                personName { givenName surname nameType }
+              }
+              emails {
+                emailInfo { email { emailAddress primaryInd } type }
+              }
             }
+            profileIdList { type id }
+          }
+        }`,
+            },
         };
         console.log("📡 [OracleStreamer] Suscribiéndose a eventos de la cadena CAR...");
         this.ws?.send(JSON.stringify(subscribeQuery));
     }
 
     // 🫀 Mantiene la conexión viva enviando un ping cada 15 segundos
-    private startPing() {
+    private startPing(): void {
         this.pingInterval = setInterval(() => {
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: "ping" }));
             }
-        }, 15000); // 15 segundos
+        }, 15_000);
     }
 
-    private stopPing() {
-        if (this.pingInterval) clearInterval(this.pingInterval);
+    private stopPing(): void {
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
     }
 }

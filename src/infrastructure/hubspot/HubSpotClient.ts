@@ -1,19 +1,36 @@
 import hubspot from "@hubspot/api-client";
 import { config } from "../../config/index.js";
 
+// ============================================================================
+// Tipos derivados del SDK (sin depender de rutas internas del paquete)
+// ============================================================================
 
+// Extrae el tipo Filter directamente de la firma del método doSearch().
+// Esto garantiza que 'operator' siempre coincida con FilterOperatorEnum,
+// independientemente de la versión del SDK instalada.
+type ContactSearchFilter = NonNullable<
+  NonNullable<
+    Parameters<
+      InstanceType<typeof hubspot.Client>["crm"]["contacts"]["searchApi"]["doSearch"]
+    >[0]["filterGroups"]
+  >[number]["filters"]
+>[number];
 
-/* Interfaces */
+// ============================================================================
+// Interfaces internas
+// ============================================================================
 
-interface HubSpotAssociation {
-  id: string;
-  types: { label?: string; typeId: number; category: string }[];
+interface AssociationResult {
+  contactId: string;
+  labels: string[];
 }
 
+// ============================================================================
 
 export class HubSpotClient {
-  // 🔥 Cambiado a público y nombre estándar para que index.ts lo vea
-  public client: any;
+  // ✅ FIX #13: Cambiado de "public client: any" a private readonly con tipo correcto.
+  //    El cliente no debe exponerse al exterior; los métodos de esta clase son la API pública.
+  private readonly client: InstanceType<typeof hubspot.Client>;
 
   constructor() {
     this.client = new hubspot.Client({
@@ -21,165 +38,188 @@ export class HubSpotClient {
     });
   }
 
-  /**
-   * 🔍 SEARCH: Busca un contacto por ID de Oracle y devuelve el objeto completo
-   */
+  // ============================================================================
+  // 🔍 CONTACTOS
+  // ============================================================================
+
   async findContactByOracleId(oracleId: string) {
     try {
-      const searchRequest = {
-        filterGroups: [
-          {
-            filters: [{ propertyName: "id_oracle", operator: "EQ", value: oracleId }],
-          },
-        ],
+      // Tipamos el filtro explícitamente con el tipo derivado del SDK.
+      // Esto resuelve: Type '"EQ"' is not assignable to type 'FilterOperatorEnum'
+      const filter: ContactSearchFilter = {
+        propertyName: "id_oracle",
+        operator: "EQ" as ContactSearchFilter["operator"],
+        value: oracleId,
       };
-      const response = await this.client.crm.contacts.searchApi.doSearch(searchRequest);
+      const response = await this.client.crm.contacts.searchApi.doSearch({
+        filterGroups: [{ filters: [filter] }],
+      });
       return response.results.length > 0 ? response.results[0] : null;
     } catch (error: any) {
-      console.error(`❌ Error buscando por id_oracle ${oracleId}:`, error.message);
+      console.error(`❌ [HubSpot] Error buscando por id_oracle "${oracleId}":`, error.message);
       throw error;
     }
   }
-
-  /**
-   * 🖋️ UPDATE: Actualizar propiedades de un contacto
-   */
-  async updateContact(contactId: string, properties: any) {
-    try {
-      await this.client.crm.contacts.basicApi.update(contactId, { properties });
-    } catch (error: any) {
-      console.error(`❌ Error al actualizar contacto ${contactId}:`, error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * 💼 UPDATE: Actualizar propiedades de un Negocio (Deal)
-   */
-  // infrastructure/hubspot/HubSpotClient.ts
-
-  async updateDeal(dealId: string, properties: {
-    id_oracle?: string,
-    numero_de_reserva?: string,
-    id_synxis?: string,
-    estado_de_reserva?: string
-  }) {
-    try {
-      // Limpiamos valores nulos para no enviar basura a HubSpot
-      const cleanProps = Object.fromEntries(
-        Object.entries(properties).filter(([_, v]) => v != null && v !== "")
-      );
-
-      await this.client.crm.deals.basicApi.update(dealId, { properties: cleanProps });
-      console.log(`✅ [HubSpot] Negocio ${dealId} actualizado con éxito.`);
-    } catch (error: any) {
-      console.error(`❌ [HubSpot] Error actualizando Negocio ${dealId}:`, error.message);
-      if (error.response?.data) {
-        console.error("Detalle:", JSON.stringify(error.response.data, null, 2));
-      }
-    }
-  }
-
-  // --- Mantenemos tus métodos anteriores por compatibilidad ---
 
   async getContactById(contactId: string) {
     const properties = ["firstname", "lastname", "email", "id_oracle"];
     const response = await this.client.crm.contacts.basicApi.getById(contactId, properties);
     return {
       id: response.id,
-      firstName: response.properties.firstname,
-      lastName: response.properties.lastname,
-      email: response.properties.email,
-      id_oracle: response.properties.id_oracle,
+      firstName: response.properties['firstname'],
+      lastName: response.properties['lastname'],
+      email: response.properties['email'],
+      id_oracle: response.properties['id_oracle'],
     };
   }
 
-  async updateOracleId(contactId: string, oracleId: string) {
+  async updateContact(contactId: string, properties: Record<string, string | undefined>): Promise<void> {
+    // SimplePublicObjectInput.properties exige { [key: string]: string } (sin undefined).
+    // Filtramos los campos undefined antes de llamar al SDK.
+    const cleanProperties: Record<string, string> = Object.fromEntries(
+      Object.entries(properties).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    );
+    try {
+      await this.client.crm.contacts.basicApi.update(contactId, { properties: cleanProperties });
+    } catch (error: any) {
+      console.error(`❌ [HubSpot] Error al actualizar contacto ${contactId}:`, error.message);
+      throw error;
+    }
+  }
+
+  async updateOracleId(contactId: string, oracleId: string): Promise<void> {
     await this.updateContact(contactId, { id_oracle: oracleId });
-    console.log(`✅ Vínculo guardado: HS ${contactId} -> Oracle ${oracleId}`);
+    console.log(`✅ [HubSpot] Vínculo guardado: Contacto ${contactId} → Oracle ${oracleId}`);
   }
 
   async getOracleIdFromContact(contactId: string): Promise<string | null> {
     try {
       const contact = await this.getContactById(contactId);
-      return contact.id_oracle || null;
-    } catch (error) { return null; }
-  }
-
-  async syncContact(unifiedContact: any) {
-    const { email, firstName, lastName, id_oracle } = unifiedContact;
-    const properties = { email, firstname: firstName, lastname: lastName, id_oracle };
-    try {
-      return await this.client.crm.contacts.basicApi.create({ properties });
-    } catch (error: any) {
-      if (error.code === 409) {
-        return await this.client.crm.contacts.basicApi.update(email, { properties, idProperty: "email" });
-      }
-      throw error;
-    }
-  }
-  // infrastructure/hubspot/HubSpotClient.ts
-
-  // infrastructure/hubspot/HubSpotClient.ts
-
-  async getContactIdFromDeal(dealId: string): Promise<string | null> {
-    try {
-      // Usamos la API de asociaciones v4 (es la más estable actualmente)
-      const response = await this.client.crm.associations.v4.basicApi.getPage(
-        'deals',    // Del objeto Negocio
-        dealId,     // Con este ID
-        'contacts'  // Buscamos Contactos
-      );
-
-      // En v4, el ID viene en 'toObjectId'
-      const contactId = response.results[0]?.toObjectId?.toString();
-
-      if (contactId) {
-        console.log(`🔗 Asociación encontrada: Deal ${dealId} -> Contacto ${contactId}`);
-      }
-
-      return contactId || null;
-    } catch (error: any) {
-      console.error(`❌ Error buscando asociación para Negocio ${dealId}:`, error.message);
+      return contact.id_oracle ?? null;
+    } catch {
       return null;
     }
   }
 
-  // infrastructure/hubspot/HubSpotClient.ts
+  /**
+   * Crea o actualiza un contacto en HubSpot (upsert).
+   * Si el email ya existe (HTTP 409), actualiza en vez de crear.
+   */
+  async syncContact(unifiedContact: any): Promise<any> {
+    const { email, firstName, lastName, id_oracle } = unifiedContact;
+    const properties = {
+      email,
+      firstname: firstName,
+      lastname: lastName,
+      id_oracle,
+    };
 
-
-  // Dentro de la clase HubSpotClient
-  async getAssociatedContacts(dealId: string) {
     try {
-      // 🚀 Usamos la versión 4 (v4) de la API de HubSpot, que es la experta en Etiquetas (Labels)
+      return await this.client.crm.contacts.basicApi.create({ properties });
+    } catch (error: any) {
+      // ✅ FIX #1: El SDK de HubSpot expone el status HTTP en error.response.status,
+      //    no en error.code (que es para errores de red de Node.js como ECONNREFUSED).
+      const httpStatus = error.response?.status ?? error.statusCode;
+      if (httpStatus === 409) {
+        // ✅ FIX #2: idProperty es el 3.er argumento de update(), no una propiedad del body.
+        //    Firma del SDK v13: update(id, simplePublicObjectInput, idProperty?)
+        return await this.client.crm.contacts.basicApi.update(
+          email,
+          { properties },
+          "email"          // ← 3.er argumento, no dentro del objeto
+        );
+      }
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // 💼 NEGOCIOS (DEALS)
+  // ============================================================================
+
+  async getDealById(dealId: string) {
+    return this.client.crm.deals.basicApi.getById(dealId, [
+      "check_in",
+      "check_out",
+      "room_type",
+      "fuente_de_reserva",
+      "tipo_de_tarifa",
+      "tipo_de_pago",
+      "cantidad_de_habitaciones",
+      "numero_de_huespedes",
+      "id_oracle",
+      "numero_de_reserva",
+    ]);
+  }
+
+  async updateDeal(dealId: string, properties: {
+    id_oracle?: string;
+    numero_de_reserva?: string;
+    id_synxis?: string;
+    estado_de_reserva?: string;
+  }): Promise<void> {
+    try {
+      // Limpiamos valores nulos/vacíos para no sobrescribir campos existentes en HubSpot
+      const cleanProps = Object.fromEntries(
+        Object.entries(properties).filter(([, v]) => v != null && v !== "")
+      );
+      await this.client.crm.deals.basicApi.update(dealId, { properties: cleanProps });
+      console.log(`✅ [HubSpot] Negocio ${dealId} actualizado.`);
+    } catch (error: any) {
+      console.error(`❌ [HubSpot] Error actualizando Negocio ${dealId}:`, error.message);
+      if (error.response?.data) {
+        console.error("[HubSpot] Detalle:", JSON.stringify(error.response.data, null, 2));
+      }
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // 🔗 ASOCIACIONES
+  // ============================================================================
+
+  /**
+   * Devuelve todos los contactos asociados a un Negocio, con sus etiquetas (labels).
+   * Usa la API de Asociaciones v4 que es la que soporta etiquetas personalizadas.
+   */
+  async getAssociatedContacts(dealId: string): Promise<AssociationResult[]> {
+    try {
       const response = await this.client.crm.associations.v4.basicApi.getPage(
-        "deals",     // Objeto de origen
-        dealId,      // ID del negocio
-        "contacts"   // Objeto de destino (lo que queremos buscar)
+        "deals",
+        dealId,
+        "contacts"
       );
 
-      // Transformamos la respuesta al formato que necesita nuestro index.ts
       return response.results.map((assoc: any) => ({
-        contactId: String(assoc.toObjectId), // En v4, el ID del destino viene como 'toObjectId'
-        labels: assoc.associationTypes
-          .map((t: any) => t.label)
-          .filter((l: any): l is string => !!l) // Filtramos para quedarnos solo con los textos válidos
+        contactId: String(assoc.toObjectId),
+        labels: (assoc.associationTypes as any[])
+          .map((t) => t.label as string | undefined)
+          .filter((l): l is string => !!l),
       }));
-
     } catch (error: any) {
-      console.error("❌ Error al obtener contactos asociados:", error.message);
+      console.error(`❌ [HubSpot] Error al obtener contactos asociados al Negocio ${dealId}:`, error.message);
       return [];
     }
   }
 
-  // En HubSpotClient.ts
-  async getDealById(dealId: string) {
-    // Traemos el negocio con TODAS las propiedades que a Opera le importan
-    const response = await this.client.crm.deals.basicApi.getById(dealId, [
-      "check_in", "check_out", "room_type", "fuente_de_reserva",
-      "tipo_de_tarifa", "tipo_de_pago", "cantidad_de_habitaciones",
-      "numero_de_huespedes", "id_oracle", "numero_de_reserva"
-    ]);
-    return response;
+  /** @deprecated Usar getAssociatedContacts() para obtener etiquetas. */
+  async getContactIdFromDeal(dealId: string): Promise<string | null> {
+    try {
+      const response = await this.client.crm.associations.v4.basicApi.getPage(
+        'deals',
+        dealId,
+        'contacts'
+      );
+      const contactId = response.results[0]?.toObjectId?.toString();
+      if (contactId) {
+        console.log(`🔗 [HubSpot] Asociación: Negocio ${dealId} → Contacto ${contactId}`);
+      }
+      return contactId ?? null;
+    } catch (error: any) {
+      console.error(`❌ [HubSpot] Error buscando asociación para Negocio ${dealId}:`, error.message);
+      return null;
+    }
   }
 }

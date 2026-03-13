@@ -1,7 +1,6 @@
-/**
- * Modelo Unificado de Contacto (El "Puente")
- * Estas son las 10 propiedades core para nuestra prueba inicial.
- */
+// ============================================================================
+// Modelo Unificado de Contacto (capa de dominio)
+// ============================================================================
 export interface UnifiedContact {
   id_oracle: string;
   email: string;
@@ -22,7 +21,9 @@ export interface UnifiedContact {
   numero_de_fidelidad__relais__chateaux: string;
 }
 
-
+// ============================================================================
+// Modelo Unificado de Reserva (capa de dominio)
+// ============================================================================
 export interface UnifiedReservation {
   id_oracle: string;
   numero_de_huespedes: string;
@@ -31,12 +32,12 @@ export interface UnifiedReservation {
   fuente_de_reserva: string;
   estado_de_reserva: string;
   numero_de_reserva: string;
-  habitacion: string;         
-  room_type?: string;         
+  habitacion: string;
+  room_type?: string;
   tipo_de_tarifa: string;
-  tipo_de_pago?: string;      
-  cantidad_de_habitaciones?: string; 
-  amount?: string;            
+  tipo_de_pago?: string;
+  cantidad_de_habitaciones?: string;
+  amount?: string;
   numero_de_vuelo: string;
   destino_anterior: string;
   transporte: string;
@@ -44,5 +45,14 @@ export interface UnifiedReservation {
   numero_de_noches_de_estancia: string;
   es_pseudo_room?: boolean;
   agencia_de_viajes?: string;
-  id_synxis?: string; 
+  id_synxis?: string;
+}
+
+// ============================================================================
+// ✅ Tipo compartido entre application (mappers) e infrastructure (index.ts)
+// Representa un perfil de huésped con su ID en Oracle y su rol en la reserva.
+// ============================================================================
+export interface GuestProfile {
+  id: string;
+  isPrimary: boolean;
 }
