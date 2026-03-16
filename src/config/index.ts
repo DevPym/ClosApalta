@@ -15,7 +15,6 @@ export const config = {
     clientSecret: process.env.ORACLE_CLIENT_SECRET || "",
     appKey: process.env.ORACLE_APP_KEY || "",
     hotelId: process.env.ORACLE_HOTEL_ID || "CAR",
-    // ✅ FIX #10: EnterpriseId sacado del .env en vez de hardcodeado
     enterpriseId: process.env.ORACLE_ENTERPRISE_ID || "CLOSAP",
     username: process.env.ORACLE_USERNAME || "",
     password: process.env.ORACLE_PASSWORD || "",
