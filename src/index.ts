@@ -49,17 +49,18 @@ app.get("/", (_req: Request, res: Response) => {
     project: "Puente Clos Apalta",
     version: "2.0.0",
     endpoints: [
-      "POST /webhook/hubspot/contact",
-      "POST /webhook/hubspot/deal",
+      "POST /webhook/hubspot/contact  (contact.creation | contact.propertyChange)",
+      "POST /webhook/hubspot/deal     (deal.creation | deal.propertyChange)",
       "GET  /sync-to-oracle/:hsId",
     ],
   });
 });
 
 // ============================================================================
-// 👤 WEBHOOK 1: CONTACTO NUEVO EN HUBSPOT
-// Trigger: HubSpot → contact.creation
-// Acción:  Crear perfil Guest en Oracle → guardar id_oracle en el Contacto
+// 👤 WEBHOOK 1: CONTACTO CREADO O ACTUALIZADO EN HUBSPOT
+// Trigger: HubSpot → contact.creation | contact.propertyChange
+// Acción CREATE: Crear perfil Guest en Oracle → guardar id_oracle en el Contacto
+// Acción UPDATE: Actualizar perfil Guest en Oracle con los datos vigentes
 // ============================================================================
 app.post("/webhook/hubspot/contact", async (req: Request, res: Response) => {
   console.log("\n📥 [CONTACTO] Webhook recibido.");
@@ -74,15 +75,23 @@ app.post("/webhook/hubspot/contact", async (req: Request, res: Response) => {
     // 1. Obtener datos frescos del contacto desde HubSpot
     const hsContact = await hubspot.getContactById(contactId);
 
-    // 2. Si ya tiene id_oracle, no crear duplicado
+    // 2. Si ya tiene id_oracle → ACTUALIZAR perfil en Oracle
     if (hsContact.id_oracle) {
       console.log(
-        `ℹ️ [CONTACTO] Ya tiene Oracle ID: ${hsContact.id_oracle}. Sin acción.`
+        `🔄 [CONTACTO] Ya tiene Oracle ID: ${hsContact.id_oracle}. Actualizando perfil...`
       );
-      return res.status(200).json({ success: true, skipped: true });
+      await oracle.updateGuestProfile(hsContact.id_oracle, {
+        firstname: hsContact.firstName,
+        lastname: hsContact.lastName,
+        email: hsContact.email,
+      });
+      console.log(
+        `✅ [CONTACTO] Perfil Guest ${hsContact.id_oracle} actualizado desde HubSpot.`
+      );
+      return res.status(200).json({ success: true, updated: true, oracleId: hsContact.id_oracle });
     }
 
-    // 3. Crear perfil Guest en Oracle
+    // 3. Sin id_oracle → CREAR perfil Guest en Oracle
     const profileData = mapHubSpotContactToGuestProfile(hsContact);
     const oracleId = await oracle.createGuestProfile(profileData);
 
@@ -92,7 +101,7 @@ app.post("/webhook/hubspot/contact", async (req: Request, res: Response) => {
     console.log(
       `✅ [CONTACTO] Contacto ${contactId} → Oracle Guest ${oracleId}`
     );
-    return res.status(200).json({ success: true, oracleId });
+    return res.status(200).json({ success: true, created: true, oracleId });
   } catch (error: any) {
     console.error("❌ [CONTACTO] Error:", error.message);
     return res.status(500).json({ error: error.message });
