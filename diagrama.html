@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arquitectura Puente Oracle ↔ HubSpot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono&display=swap"
+        rel="stylesheet">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            securityLevel: 'loose',
+            sequence: { showSequenceNumbers: true, useMaxWidth: false }
+        });
+    </script>
+    <style>
+        :root {
+            --bg: #0b1020;
+            --panel: #121a33;
+            --panel-2: #0f1730;
+            --text: #e8eefc;
+            --muted: #9fb0d1;
+            --accent: #7cc4ff;
+            --line: #2b3a63;
+            --table-head: #162344;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #f87171;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 30px;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 20px;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin: 0;
+            color: #fff;
+        }
+
+        .version {
+            font-size: 14px;
+            color: var(--accent);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        .col-6 {
+            grid-column: span 6;
+        }
+
+        .col-12 {
+            grid-column: span 12;
+        }
+
+        .col-8 {
+            grid-column: span 8;
+        }
+
+        .col-4 {
+            grid-column: span 4;
+        }
+
+        h2 {
+            font-size: 18px;
+            margin-top: 0;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--accent);
+        }
+
+        /* Mermaid styling */
+        .mermaid {
+            background: #0d1225;
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            background: var(--table-head);
+            text-align: left;
+            padding: 10px;
+            border-bottom: 2px solid var(--line);
+        }
+
+        td {
+            padding: 10px;
+            border-bottom: 1px solid var(--line);
+            vertical-align: top;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(124, 196, 255, 0.1);
+            color: var(--accent);
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+
+        .badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .badge-inactive {
+            background: #332b2b;
+            color: var(--error);
+        }
+
+        .badge-active {
+            background: #22332b;
+            color: var(--success);
+        }
+
+        .scroll-x {
+            overflow-x: auto;
+        }
+
+        @media (max-width: 1024px) {
+
+            .col-6,
+            .col-8,
+            .col-4 {
+                grid-column: span 12;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <header>
+            <h1>Arquitectura del Puente Oracle ↔ HubSpot — Clos Apalta</h1>
+            <div class="version">v3.0.0 • System Documentation</div>
+        </header>
+
+        <div class="grid">
+            <div class="card col-8">
+                <h2>1. Diagrama de Componentes (Arquitectura de Capas)</h2>
+                <div class="mermaid">
+                    graph TD
+                    subgraph CAPA1["Capa 1 — Entrada"]
+                    W1["POST /webhook/hubspot/contact"]
+                    W2["POST /webhook/hubspot/deal"]
+                    HC["GET / — Health Check"]
+                    end
+                    subgraph CAPA2["Capa 2 — Cola y Worker"]
+                    Q["queue.ts (FIFO)"]
+                    WK["worker.ts (Retry Logic)"]
+                    end
+                    subgraph CAPA3["Capa 3 — Jobs"]
+                    JC["processContact.ts"]
+                    JD["processDeal.ts"]
+                    end
+                    subgraph CAPA4["Capa 4 — Transformación"]
+                    M1["mappers.ts"]
+                    end
+                    subgraph CAPA5["Capa 5 — Infraestructura"]
+                    HS["HubSpotClient.ts"]
+                    OR["OracleClient.ts"]
+                    end
+
+                    CAPA1 --> CAPA2
+                    CAPA2 --> CAPA3
+                    CAPA3 --> CAPA4
+                    CAPA3 --> CAPA5
+                </div>
+            </div>
+
+            <div class="card col-4">
+                <h2>3. Ciclo de Vida del Worker</h2>
+                <div class="mermaid">
+                    stateDiagram-v2
+                    [*] --> ENCOLADO
+                    ENCOLADO --> PROCESANDO
+                    PROCESANDO --> COMPLETADO
+                    PROCESANDO --> FALLIDO
+                    FALLIDO --> ESPERANDO: attempts < 3 ESPERANDO --> ENCOLADO: retry
+                        FALLIDO --> MUERTO: attempts = 3
+                        COMPLETADO --> [*]
+                </div>
+                <div style="margin-top:15px; font-size:12px; color:var(--muted)">
+                    • Backoff: 5s → 30s<br>
+                    • Reintento manual via: <code>/sync-to-oracle/:id</code>
+                </div>
+            </div>
+
+            <div class="card col-6">
+                <h2>2A. Flujo: Contacto (HubSpot → Oracle)</h2>
+                <div class="scroll-x">
+                    <div class="mermaid">
+                        sequenceDiagram
+                        participant HS as HubSpot
+                        participant Q as Queue/Worker
+                        participant OC as Oracle OHIP
+
+                        HS->>Q: Webhook Contact Event
+                        Q->>HS: GET Contact Data
+                        alt Tiene id_oracle
+                        Q->>OC: UPDATE Guest Profile
+                        else No tiene id_oracle
+                        Q->>OC: CREATE Guest Profile
+                        OC-->>Q: oracleId
+                        Q->>HS: UPDATE id_oracle
+                        end
+                    </div>
+                </div>
+            </div>
+
+            <div class="card col-6">
+                <h2>2B. Flujo: Deal - 7 Pasos (HubSpot → Oracle)</h2>
+                <div class="scroll-x">
+                    <div class="mermaid">
+                        sequenceDiagram
+                        participant HS as HubSpot
+                        participant JD as processDeal
+                        participant OC as Oracle OHIP
+
+                        JD->>HS: 1. Read Deal & 2. Associations
+                        JD->>OC: 3. Sync Guest Profiles
+                        JD->>OC: 4. Sync Company/Agent
+                        JD->>OC: 5. Create/Update Reservation
+                        JD->>OC: 6. Get Confirmation No.
+                        JD->>HS: 7. Update HubSpot IDs
+                    </div>
+                </div>
+            </div>
+
+            <div class="card col-4">
+                <h2>4. Referencia de Funciones CRUD</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Servicio</th>
+                            <th>Operación</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><b>HubSpot</b></td>
+                            <td><code>getContactById</code><br><code>getDealById</code><br><code>updateOracleId</code>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><b>Oracle</b></td>
+                            <td><code>createGuestProfile</code><br><code>createReservation</code><br><code>getReservation</code>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card col-8">
+                <h2>5. Mappers (Traducción de Datos)</h2>
+                <div class="grid" style="gap:10px;">
+                    <div style="grid-column: span 6;">
+                        <div style="font-size:12px; font-weight:bold; margin-bottom:5px;">Tipos de Habitación</div>
+                        <table>
+                            <tr>
+                                <th>HS</th>
+                                <th>Oracle</th>
+                            </tr>
+                            <tr>
+                                <td>Casita</td>
+                                <td><code>CASITA</code></td>
+                            </tr>
+                            <tr>
+                                <td>Pool Casita</td>
+                                <td><code>PLCASITA</code></td>
+                            </tr>
+                            <tr>
+                                <td>Villa</td>
+                                <td><code>VILLA</code></td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div style="grid-column: span 6;">
+                        <div style="font-size:12px; font-weight:bold; margin-bottom:5px;">Tarifas</div>
+                        <table>
+                            <tr>
+                                <th>HS</th>
+                                <th>Oracle</th>
+                            </tr>
+                            <tr>
+                                <td>Overnight</td>
+                                <td><code>BAROV</code></td>
+                            </tr>
+                            <tr>
+                                <td>Half Board</td>
+                                <td><code>BARHB</code></td>
+                            </tr>
+                            <tr>
+                                <td>Full board</td>
+                                <td><code>BARFB</code></td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card col-12" style="border-left: 4px solid var(--error);">
+                <h2>2C. Perfil (Oracle → HubSpot) <span class="badge badge-inactive">Inactivo</span></h2>
+                <p style="font-size: 13px; color: var(--muted); margin: 0;">
+                    Este flujo está pendiente de activación. Requiere la habilitación de Webhooks salientes en el portal
+                    OHIP y la resolución del conflicto de puertos en el servidor.
+                </p>
+            </div>
+
+        </div>
+    </div>
+
+</body>
+
+</html>
+
+with open("arquitectura_dashboard.html", "w", encoding="utf-8") as f:
+f.write(dashboard_html)

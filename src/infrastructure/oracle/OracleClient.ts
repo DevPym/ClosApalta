@@ -264,6 +264,143 @@ export class OracleClient {
   }
 
   // =========================================================================
+  // 🏢 ACTUALIZAR PERFIL DE EMPRESA
+  //
+  // Endpoint verificado en ApiOracleCRM.json:
+  //   PUT /crm/v1/profiles/{profileId}   operationId: putProfile
+  //
+  // IMPORTANTE: No existe PUT /crm/v1/companies/{corporateID} en la API
+  // oficial (solo GET). La actualización de empresas se hace mediante el
+  // endpoint genérico de perfiles, igual que updateGuestProfile().
+  //
+  // Campos soportados por este método (todos opcionales salvo companyName):
+  //   companyName  → profileDetails.company.companyName  (obligatorio en Oracle)
+  //   email        → profileDetails.emails
+  //   phone        → profileDetails.telephones
+  //   address      → profileDetails.addresses (addressLine, cityName, country)
+  // =========================================================================
+
+  /**
+   * Actualiza un perfil de empresa existente en Oracle.
+   *
+   * @param oracleId   - ID interno del perfil en Oracle (el corporateId guardado en HubSpot)
+   * @param data       - Campos de empresa a actualizar (mínimo name es requerido)
+   * @returns          - void; lanza excepción si falla
+   */
+  async updateCompanyProfile(
+    oracleId: string,
+    data: {
+      name?: string;
+      phone?: string;
+      email?: string;
+      address?: string;
+      city?: string;
+      country?: string;
+    }
+  ): Promise<void> {
+    await this.ensureToken();
+
+    // companyName es el único campo obligatorio para Oracle.
+    // Si no viene, no tiene sentido hacer el PUT.
+    if (!data.name || !data.name.trim()) {
+      console.log(
+        `⚠️ [Oracle] updateCompanyProfile ${oracleId}: falta companyName obligatorio. Operación cancelada.`
+      );
+      return;
+    }
+
+    // ── Body base: nombre de empresa ────────────────────────────────────────
+    // Según ApiOracleCRM.json > definitions > companyType:
+    //   companyName: "Name of the company."
+    const body: any = {
+      profileDetails: {
+        company: {
+          companyName: data.name.trim(),
+          language: "E",
+        },
+      },
+    };
+
+    // ── Email (opcional) ─────────────────────────────────────────────────────
+    // Según ApiOracleCRM.json > definitions > companyProfileType > emails
+    // Estructura idéntica a updateGuestProfile()
+    if (data.email && data.email.trim()) {
+      body.profileDetails.emails = {
+        emailInfo: [
+          {
+            email: {
+              type: "EMAIL",
+              emailAddress: data.email.trim(),
+              primaryInd: true,
+            },
+          },
+        ],
+      };
+    }
+
+    // ── Teléfono (opcional) ──────────────────────────────────────────────────
+    // Según ApiOracleCRM.json > definitions > telephoneType:
+    //   phoneNumber, phoneTechType, primaryInd
+    if (data.phone && data.phone.trim()) {
+      body.profileDetails.telephones = {
+        telephoneInfo: [
+          {
+            telephone: {
+              phoneTechType: "PHONE",
+              phoneNumber: data.phone.trim(),
+              primaryInd: true,
+            },
+          },
+        ],
+      };
+    }
+
+    // ── Dirección (opcional) ─────────────────────────────────────────────────
+    // Según ApiOracleCRM.json > definitions > addressType:
+    //   addressLine (array), cityName, country { code, value }
+    // Se incluye solo si hay al menos un campo de dirección
+    const hasAddress = data.address || data.city || data.country;
+    if (hasAddress) {
+      const addressBlock: any = {
+        type: "BUSINESS",
+        primaryInd: true,
+        language: "E",
+      };
+      if (data.address) addressBlock.addressLine = [data.address.trim()];
+      if (data.city) addressBlock.cityName = data.city.trim();
+      if (data.country) addressBlock.country = { code: data.country.trim() };
+
+      body.profileDetails.addresses = {
+        addressInfo: [{ address: addressBlock }],
+      };
+    }
+
+    try {
+      console.log(
+        `📡 [Oracle] Actualizando perfil empresa ${oracleId}: "${data.name}"`
+      );
+      // PUT /crm/v1/profiles/{profileId}
+      await axios.put(
+        `${config.oracle.baseUrl}/crm/v1/profiles/${oracleId}`,
+        body,
+        { headers: this.getHeaders() }
+      );
+      console.log(
+        `✅ [Oracle] Perfil empresa ${oracleId} actualizado.`
+      );
+    } catch (error: any) {
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail || error.message;
+      console.error(
+        `❌ [Oracle] updateCompanyProfile ${oracleId} [${status}]:`,
+        detail
+      );
+      // Re-lanzar para que el worker pueda reintentar
+      throw error;
+    }
+  }
+
+  // =========================================================================
   // 🛏️ RESERVAS
   // =========================================================================
 

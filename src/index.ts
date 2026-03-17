@@ -31,6 +31,7 @@ app.get("/", (_req: Request, res: Response) => {
       "POST /webhook/hubspot/contact  (contact.creation | contact.propertyChange)",
       "POST /webhook/hubspot/deal     (deal.creation | deal.propertyChange)",
       "GET  /sync-to-oracle/:hsId     (solo uso manual)",
+      "POST /webhook/hubspot/company  (company.creation | company.propertyChange)",
     ],
   });
 });
@@ -120,6 +121,36 @@ app.get("/sync-to-oracle/:hsId", async (req: Request, res: Response) => {
     console.error("❌ [Manual] Error:", error.message);
     return res.status(500).json({ error: error.message });
   }
+});
+
+// ============================================================================
+// 🏢 WEBHOOK 3: COMPANY CREADA O ACTUALIZADA
+// Trigger: HubSpot → company.creation | company.propertyChange
+//
+// Patrón idéntico al webhook de contacto y deal:
+//   - Respuesta inmediata 200 OK en <1ms
+//   - El trabajo real ocurre en src/jobs/processCompany.ts
+//   - Reintentos con backoff gestionados por src/queue/worker.ts
+//
+// Flujo de processCompany:
+//   1. Obtener Company completa de HubSpot
+//   2. Si id_oracle existe → actualizar perfil en Oracle (PUT /crm/v1/profiles/{id})
+//   3. Si no existe        → crear perfil en Oracle (POST /crm/v1/companies)
+//   4. Guardar id_oracle devuelto por Oracle de vuelta en HubSpot
+// ============================================================================
+app.post("/webhook/hubspot/company", (req: Request, res: Response) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
+  if (events.length === 0) return res.status(200).send("OK");
+
+  const companyId = String(events[0].objectId);
+  const jobId = queue.push("company", { companyId });
+
+  console.log(
+    `📥 [Webhook:Company] Company ${companyId} encolada → job ${jobId}`
+  );
+
+  // Respuesta inmediata — HubSpot no espera el procesamiento
+  return res.status(200).json({ received: true, jobId });
 });
 
 // ============================================================================

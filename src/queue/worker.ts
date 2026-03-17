@@ -2,6 +2,7 @@ import { queue } from "./queue.js";
 import type { Job } from "./queue.js";
 import { processContact } from "../jobs/processContact.js";
 import { processDeal } from "../jobs/processDeal.js";
+import { processCompany } from "../jobs/processCompany.js";
 
 // ============================================================================
 // ⚙️ WORKER — Procesador de jobs en segundo plano
@@ -82,9 +83,13 @@ async function dispatch(job: Job): Promise<void> {
         case "deal":
             await processDeal(job.payload as { dealId: string });
             break;
+        // ── Cambio: nuevo case para el webhook de Company ────────────────────
+        case "company":
+            await processCompany(job.payload as { companyId: string });
+            break;
         default:
-            // TypeScript garantiza que job.type es "contact" | "deal",
-            // pero si llegara un valor inesperado lo registramos y lo descartamos.
+            // TypeScript hace exhaustividad sobre "contact" | "deal" | "company".
+            // Si llegara un valor inesperado en runtime, se registra y descarta.
             console.error(`❌ [Worker] Tipo de job desconocido: ${(job as any).type}`);
     }
 }

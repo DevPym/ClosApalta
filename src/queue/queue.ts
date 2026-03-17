@@ -12,7 +12,9 @@ import { randomUUID } from "crypto";
 // considerar agregar persistencia con SQLite.
 // ============================================================================
 
-export type JobType = "contact" | "deal";
+// ── Cambio: se agrega "company" al union type ────────────────────────────────
+// Requiere actualizar dispatch() en worker.ts y agregar processCompany.ts
+export type JobType = "contact" | "deal" | "company";
 
 export interface Job {
     id: string;
