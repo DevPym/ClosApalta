@@ -89,13 +89,20 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
 
         let companyOracleId = hsCompany.id_oracle;
 
-        if (!companyOracleId) {
+        // ⚠️ FIX: si la company no tiene nombre, Oracle rechaza la creación con 400.
+        // En ese caso la ignoramos — la reserva se procesa como individual.
+        if (!hsCompany.name || !hsCompany.name.trim()) {
+            console.warn(
+                `⚠️ [Job:Deal] Company asociada al Deal no tiene nombre. ` +
+                `Se omite — verificar en HubSpot que el campo 'name' esté completo.`
+            );
+        } else if (!companyOracleId) {
             console.warn(
                 `⚠️ [Job:Deal] Company "${hsCompany.name}" no tiene id_oracle. ` +
                 `El webhook de company no se procesó antes. ` +
                 `Creando en Oracle solo con nombre — revisar webhook de Company en HubSpot.`
             );
-            const oracleProfileType = resolveOracleCompanyType(hsCompany.tipo_de_empresa);
+            const oracleProfileType = resolveOracleCompanyType(hsCompany.tipo_de_empresa ?? "");
             companyOracleId = await oracle.createCompanyProfile(
                 hsCompany.name,
                 oracleProfileType

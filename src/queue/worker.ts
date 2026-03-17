@@ -1,7 +1,7 @@
 import { queue } from "./queue.js";
 import type { Job } from "./queue.js";
 import { processContact, deleteContact } from "../jobs/processContact.js";
-import { processDeal, deleteDeal } from "../jobs/processDeal_with_delete.js";
+import { processDeal, deleteDeal } from "../jobs/processDeal.js";
 import { processCompany, deleteCompany } from "../jobs/processCompany.js";
 
 // ============================================================================
@@ -11,10 +11,18 @@ import { processCompany, deleteCompany } from "../jobs/processCompany.js";
 //   Intento 1 falla → espera 5s  → intento 2
 //   Intento 2 falla → espera 30s → intento 3
 //   Intento 3 falla → job muerto, registrado en logs
+//
+// ⚠️ FIX v4.1: se usa queue.retry(job) en lugar de queue.push(type, payload).
+//   queue.push() creaba un job nuevo con attempts=0 en cada reintento,
+//   causando un loop infinito. queue.retry() conserva el objeto original
+//   con su contador de intentos intacto.
 // ============================================================================
 
 const MAX_ATTEMPTS = 3;
-const RETRY_DELAYS_MS: Record<number, number> = { 1: 5_000, 2: 30_000 };
+const RETRY_DELAYS_MS: Record<number, number> = {
+    1: 5_000,
+    2: 30_000,
+};
 
 async function processNextJob(): Promise<void> {
     const job = queue.shift();
@@ -30,29 +38,28 @@ async function processNextJob(): Promise<void> {
         console.log(`✅ [Worker] Job ${job.id} completado.`);
     } catch (error: any) {
         console.error(`❌ [Worker] Job ${job.id} falló: ${error.message}`);
+
         if (job.attempts < MAX_ATTEMPTS) {
             const delayMs = RETRY_DELAYS_MS[job.attempts] ?? 5_000;
             console.log(`🔄 [Worker] Reintentando job ${job.id} en ${delayMs / 1000}s...`);
-            setTimeout(() => queue.push(job.type, job.payload), delayMs);
+            // ✅ FIX: usar retry() para conservar attempts y no crear loop infinito
+            setTimeout(() => queue.retry(job), delayMs);
         } else {
             logDeadJob(job, error);
         }
     }
+
     setImmediate(processNextJob);
 }
 
 async function dispatch(job: Job): Promise<void> {
     switch (job.type) {
-        // ── Creación / Actualización ─────────────────────────────────────────
         case "contact": await processContact(job.payload as { contactId: string }); break;
         case "deal": await processDeal(job.payload as { dealId: string }); break;
         case "company": await processCompany(job.payload as { companyId: string }); break;
-
-        // ── Eliminación ──────────────────────────────────────────────────────
         case "delete-contact": await deleteContact(job.payload as { contactId: string }); break;
         case "delete-company": await deleteCompany(job.payload as { companyId: string }); break;
         case "delete-deal": await deleteDeal(job.payload as { dealId: string }); break;
-
         default:
             console.error(`❌ [Worker] Tipo de job desconocido: ${(job as any).type}`);
     }

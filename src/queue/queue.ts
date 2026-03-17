@@ -1,20 +1,7 @@
-// 2 - Capa de cola (queue/) — almacena jobs pendientes y los procesa en segundo plano con reintentos automáticos. No sabe nada de HubSpot ni Oracle.
+// 2 - Capa de cola (queue/) — almacena jobs pendientes y los procesa en segundo plano con reintentos automáticos.
 
 import { randomUUID } from "crypto";
 
-// ============================================================================
-// 📬 COLA EN MEMORIA
-// Almacena jobs pendientes en un array ordenado por llegada (FIFO).
-// No requiere dependencias externas ni base de datos.
-// Limitación conocida: los jobs pendientes se pierden si el proceso
-// se reinicia. Para el volumen actual (10–50 eventos/día) es aceptable.
-// Si el entorno de despliegue tiene reinicios frecuentes (Render free tier),
-// considerar agregar persistencia con SQLite.
-// ============================================================================
-
-// ── Cambio v4.0: se agregan "delete-contact", "delete-company", "delete-deal" ─
-// Cada tipo de deletion tiene su propio job type para que el worker pueda
-// despacharlos al handler correcto sin ambigüedad.
 export type JobType =
     | "contact"
     | "deal"
@@ -27,7 +14,7 @@ export interface Job {
     id: string;
     type: JobType;
     payload: Record<string, any>;
-    attempts: number;         // cuántas veces se intentó procesar
+    attempts: number;
     createdAt: Date;
 }
 
@@ -35,34 +22,39 @@ export class Queue {
     private jobs: Job[] = [];
 
     /**
-     * Agrega un nuevo job al final de la cola.
-     * Retorna el ID del job para trazabilidad en los logs.
+     * Crea y encola un job NUEVO (attempts=0).
+     * Usado por los webhooks al recibir un evento.
      */
     push(type: JobType, payload: Record<string, any>): string {
         const id = randomUUID();
         this.jobs.push({ id, type, payload, attempts: 0, createdAt: new Date() });
-        console.log(
-            `📬 [Cola] Job ${id} (${type}) encolado. Pendientes: ${this.jobs.length}`
-        );
+        console.log(`📬 [Cola] Job ${id} (${type}) encolado. Pendientes: ${this.jobs.length}`);
         return id;
     }
 
     /**
-     * Extrae y retorna el primer job de la cola.
-     * Retorna undefined si la cola está vacía.
+     * Re-encola un job EXISTENTE conservando su id, attempts y createdAt.
+     * Usado por el worker en reintentos — así MAX_ATTEMPTS se respeta.
+     *
+     * ⚠️ Sin este método, el worker creaba un job nuevo con attempts=0
+     * en cada reintento, causando un loop infinito que nunca alcanzaba
+     * MAX_ATTEMPTS. Corrección aplicada en v4.1.
      */
+    retry(job: Job): void {
+        this.jobs.push(job);
+        console.log(
+            `🔁 [Cola] Job ${job.id} (${job.type}) re-encolado. ` +
+            `Intento ${job.attempts} completado. Pendientes: ${this.jobs.length}`
+        );
+    }
+
     shift(): Job | undefined {
         return this.jobs.shift();
     }
 
-    /**
-     * Devuelve el número de jobs pendientes.
-     */
     get size(): number {
         return this.jobs.length;
     }
 }
 
-// Instancia única compartida entre index.ts y worker.ts
-// Un solo objeto en memoria — no hay concurrencia porque Node.js es single-thread.
 export const queue = new Queue();
