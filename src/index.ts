@@ -151,7 +151,77 @@ app.post("/webhook/hubspot/company", (req: Request, res: Response) => {
   // Respuesta inmediata — HubSpot no espera el procesamiento
   return res.status(200).json({ received: true, jobId });
 });
+// ============================================================================
+// 🗑️ WEBHOOK 4: CONTACT ELIMINADO
+// Trigger: HubSpot → contact.deletion
+//
+// ⚠️ DIFERENCIA CRÍTICA respecto a contact.creation / contact.propertyChange:
+//   El payload de deletion NO incluye propiedades del objeto (id_oracle, etc.).
+//   Solo entrega objectId. El job lee el objeto archivado (archived=true)
+//   para recuperar el id_oracle antes de operar en Oracle.
+//
+// Acción en Oracle:
+//   DELETE /crm/v1/profiles/{id_oracle}  → anonimiza el perfil Guest
+//   (Oracle no elimina perfiles permanentemente — cumplimiento de auditoría)
+// ============================================================================
+app.post("/webhook/hubspot/contact/delete", (req: Request, res: Response) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
+  if (events.length === 0) return res.status(200).send("OK");
 
+  const contactId = String(events[0].objectId);
+  const jobId = queue.push("delete-contact", { contactId });
+
+  console.log(
+    `📥 [Webhook:DeleteContact] Contact ${contactId} encolado para eliminación → job ${jobId}`
+  );
+
+  return res.status(200).json({ received: true, jobId });
+});
+
+// ============================================================================
+// 🗑️ WEBHOOK 5: COMPANY ELIMINADA
+// Trigger: HubSpot → company.deletion
+//
+// Acción en Oracle:
+//   DELETE /crm/v1/profiles/{id_oracle}  → anonimiza el perfil Company/Agent
+//   (No existe DELETE /companies/{id} en la API oficial de Oracle)
+// ============================================================================
+app.post("/webhook/hubspot/company/delete", (req: Request, res: Response) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
+  if (events.length === 0) return res.status(200).send("OK");
+
+  const companyId = String(events[0].objectId);
+  const jobId = queue.push("delete-company", { companyId });
+
+  console.log(
+    `📥 [Webhook:DeleteCompany] Company ${companyId} encolada para eliminación → job ${jobId}`
+  );
+
+  return res.status(200).json({ received: true, jobId });
+});
+
+// ============================================================================
+// 🗑️ WEBHOOK 6: DEAL ELIMINADO
+// Trigger: HubSpot → deal.deletion
+//
+// Acción en Oracle:
+//   POST /hotels/{hotelId}/reservations/{id_oracle}/cancellations
+//   → cancela la reserva (Oracle no permite eliminar reservas confirmadas)
+//   → devuelve número de cancelación registrado en logs
+// ============================================================================
+app.post("/webhook/hubspot/deal/delete", (req: Request, res: Response) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
+  if (events.length === 0) return res.status(200).send("OK");
+
+  const dealId = String(events[0].objectId);
+  const jobId = queue.push("delete-deal", { dealId });
+
+  console.log(
+    `📥 [Webhook:DeleteDeal] Deal ${dealId} encolado para cancelación → job ${jobId}`
+  );
+
+  return res.status(200).json({ received: true, jobId });
+});
 // ============================================================================
 // 🚀 INICIO DEL SERVIDOR
 // ============================================================================

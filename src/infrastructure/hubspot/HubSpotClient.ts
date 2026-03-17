@@ -251,6 +251,126 @@ export class HubSpotClient {
   }
 
   // =========================================================================
+  // 🗑️ LECTURA DE OBJETOS ARCHIVADOS (para webhooks de deletion)
+  //
+  // Cuando HubSpot dispara contact.deletion / company.deletion / deal.deletion,
+  // el payload solo contiene objectId — NO incluye propiedades como id_oracle.
+  //
+  // SOLUCIÓN: el SDK de HubSpot permite leer objetos archivados pasando
+  // archived=true como 5to parámetro de getById(). HubSpot mantiene el
+  // objeto archivado ~90 días antes de su purga definitiva.
+  //
+  // Firma del SDK:
+  //   basicApi.getById(id, properties?, propertiesWithHistory?, associations?, archived?)
+  //
+  // Estos métodos devuelven SOLO el id_oracle (lo único que necesitamos
+  // para operar en Oracle). Si el objeto ya fue purgado, devuelven null.
+  // =========================================================================
+
+  /**
+   * Lee un Contact archivado (eliminado) de HubSpot.
+   * Devuelve { id, id_oracle } o null si ya fue purgado.
+   */
+  async getArchivedContactById(
+    contactId: string
+  ): Promise<{ id: string; id_oracle: string | null } | null> {
+    try {
+      const response = await this.client.crm.contacts.basicApi.getById(
+        contactId,
+        ["id_oracle"],   // properties
+        [],              // propertiesWithHistory
+        [],              // associations
+        true             // archived = true ← clave para leer eliminados
+      );
+      return {
+        id: response.id,
+        id_oracle: response.properties.id_oracle || null,
+      };
+    } catch (error: any) {
+      // 404 = ya purgado definitivamente por HubSpot
+      if (error.response?.status === 404 || error.statusCode === 404) {
+        console.warn(
+          `⚠️ [HubSpot] Contact archivado ${contactId} no encontrado (ya purgado).`
+        );
+        return null;
+      }
+      console.error(
+        `❌ [HubSpot] getArchivedContactById ${contactId}:`,
+        error.message
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Lee una Company archivada (eliminada) de HubSpot.
+   * Devuelve { id, id_oracle } o null si ya fue purgada.
+   */
+  async getArchivedCompanyById(
+    companyId: string
+  ): Promise<{ id: string; id_oracle: string | null } | null> {
+    try {
+      const response = await this.client.crm.companies.basicApi.getById(
+        companyId,
+        ["id_oracle"],
+        [],
+        [],
+        true             // archived = true
+      );
+      return {
+        id: response.id,
+        id_oracle: response.properties.id_oracle || null,
+      };
+    } catch (error: any) {
+      if (error.response?.status === 404 || error.statusCode === 404) {
+        console.warn(
+          `⚠️ [HubSpot] Company archivada ${companyId} no encontrada (ya purgada).`
+        );
+        return null;
+      }
+      console.error(
+        `❌ [HubSpot] getArchivedCompanyById ${companyId}:`,
+        error.message
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Lee un Deal archivado (eliminado) de HubSpot.
+   * Devuelve { id, id_oracle } o null si ya fue purgado.
+   */
+  async getArchivedDealById(
+    dealId: string
+  ): Promise<{ id: string; id_oracle: string | null } | null> {
+    try {
+      const response = await this.client.crm.deals.basicApi.getById(
+        dealId,
+        ["id_oracle"],
+        [],
+        [],
+        true             // archived = true
+      );
+      return {
+        id: response.id,
+        id_oracle: response.properties.id_oracle || null,
+      };
+    } catch (error: any) {
+      if (error.response?.status === 404 || error.statusCode === 404) {
+        console.warn(
+          `⚠️ [HubSpot] Deal archivado ${dealId} no encontrado (ya purgado).`
+        );
+        return null;
+      }
+      console.error(
+        `❌ [HubSpot] getArchivedDealById ${dealId}:`,
+        error.message
+      );
+      return null;
+    }
+  }
+
+  // =========================================================================
   // 🔗 ASOCIACIONES
   // =========================================================================
 

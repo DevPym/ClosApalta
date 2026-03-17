@@ -196,6 +196,136 @@ export class OracleClient {
   }
 
   // =========================================================================
+  // 🗑️ ANONIMIZAR PERFIL (Contact o Company)
+  //
+  // Endpoint verificado en ApiOracleCRM.json:
+  //   DELETE /crm/v1/profiles/{profileId}   operationId: deleteProfile
+  //
+  // ⚠️ Oracle NO elimina el registro — lo ANONIMIZA.
+  //   Borra nombre, email, teléfono y datos personales, pero conserva
+  //   el ID y el historial de reservas por cumplimiento de auditoría.
+  //   Este es el comportamiento estándar de OPERA Cloud.
+  //
+  // Aplica a profileType: Guest, Company, Agent (Travel Agent).
+  // =========================================================================
+
+  /**
+   * Anonimiza un perfil en Oracle (Guest, Company o Agent).
+   * Equivale a "olvidar" los datos personales del perfil.
+   *
+   * @param oracleId - ID interno del perfil en Oracle
+   */
+  async anonymizeProfile(oracleId: string): Promise<void> {
+    await this.ensureToken();
+
+    try {
+      console.log(`📡 [Oracle] Anonimizando perfil ${oracleId}...`);
+
+      await axios.delete(
+        `${config.oracle.baseUrl}/crm/v1/profiles/${oracleId}`,
+        { headers: this.getHeaders() }
+      );
+
+      console.log(`✅ [Oracle] Perfil ${oracleId} anonimizado.`);
+    } catch (error: any) {
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail || error.message;
+      console.error(
+        `❌ [Oracle] anonymizeProfile ${oracleId} [${status}]:`,
+        detail
+      );
+      throw error;
+    }
+  }
+
+  // =========================================================================
+  // 🏨 CANCELAR RESERVA
+  //
+  // Endpoint verificado en ApiOracleReservations.json:
+  //   POST /hotels/{hotelId}/reservations/{reservationId}/cancellations
+  //   operationId: postCancelReservation
+  //
+  // ⚠️ Oracle NO permite eliminar reservas confirmadas permanentemente.
+  //   La cancelación es el único mecanismo disponible para ellas.
+  //   Devuelve un número de cancelación en:
+  //   response.cxlActivityLog[0].cancellationIdList[0].id
+  //
+  // ⚠️ reason.code debe ser un código válido configurado en OPERA Cloud.
+  //   Ver CANCELLATION_REASON_CODE en src/jobs/deleteDeal.ts.
+  // =========================================================================
+
+  /**
+   * Cancela una reserva confirmada en Oracle.
+   *
+   * @param oracleReservationId - ID interno de la reserva en Oracle
+   * @param reasonCode          - Código de razón de cancelación (default: "OTHR")
+   * @returns                   - Número de cancelación (string) o null si Oracle no lo devuelve
+   */
+  async cancelReservation(
+    oracleReservationId: string,
+    reasonCode: string = "OTHR"
+  ): Promise<string | null> {
+    await this.ensureToken();
+
+    // Body según ejemplo oficial de ApiOracleReservations.json:
+    // { reason, reservations[{ reservationIdList, allowedActions, hotelId, cxlInstr }], verificationOnly }
+    const body = {
+      reason: {
+        description: "Cancelled from HubSpot",
+        code: reasonCode,
+      },
+      reservations: [
+        {
+          reservationIdList: [
+            { id: String(oracleReservationId), type: "Reservation" },
+          ],
+          allowedActions: ["Cancel"],
+          hotelId: config.oracle.hotelId,
+          cxlInstr: {
+            deleteResTraces: false,
+          },
+        },
+      ],
+      verificationOnly: false,
+    };
+
+    const url = `${config.oracle.baseUrl}/rsv/v1/hotels/${config.oracle.hotelId}/reservations/${oracleReservationId}/cancellations`;
+
+    try {
+      console.log(
+        `📡 [Oracle] Cancelando reserva ${oracleReservationId} con código "${reasonCode}"...`
+      );
+
+      const response = await axios.post(url, body, {
+        headers: this.getHeaders(),
+      });
+
+      // Extraer cancellation number de la respuesta:
+      // response.data.cxlActivityLog[0].cancellationIdList[0].id
+      // Verificado en ApiOracleReservations.json > cancelReservationDetails >
+      // cxlActivityLog (array de cancellationActivityType) > cancellationIdList
+      const cancellationNumber: string | null =
+        response.data?.cxlActivityLog?.[0]?.cancellationIdList?.[0]?.id
+        ?? null;
+
+      console.log(
+        `✅ [Oracle] Reserva ${oracleReservationId} cancelada. ` +
+        `Número de cancelación: ${cancellationNumber ?? "no devuelto"}`
+      );
+
+      return cancellationNumber;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail || error.message;
+      console.error(
+        `❌ [Oracle] cancelReservation ${oracleReservationId} [${status}]:`,
+        detail
+      );
+      throw error;
+    }
+  }
+
+  // =========================================================================
   // 🏢 PERFILES DE EMPRESA (Company / Travel Agent)
   // Endpoint: POST /crm/v1/companies
   // Según la doc oficial de OHIP, tanto Company como TravelAgent

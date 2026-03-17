@@ -4,17 +4,14 @@ import { OracleClient } from "../infrastructure/oracle/OracleClient.js";
 import { HubSpotClient } from "../infrastructure/hubspot/HubSpotClient.js";
 import { mapHubSpotContactToGuestProfile } from "../application/mappers.js";
 
-// Instancias compartidas con index.ts — se importan del mismo módulo
-// para no crear conexiones duplicadas.
 const oracle = new OracleClient();
 const hubspot = new HubSpotClient();
 
 // ============================================================================
-// 👤 JOB: Procesar Contacto
+// 👤 CREAR / ACTUALIZAR Contact
 //
-// Lógica pura extraída del webhook POST /webhook/hubspot/contact.
-// No recibe req/res — solo datos y lanza excepciones si algo falla.
-// El worker en queue/worker.ts maneja los reintentos.
+// Disparado por: POST /webhook/hubspot/contact
+// Triggers HubSpot: contact.creation | contact.propertyChange
 //
 // Flujo:
 //   1. Obtener datos frescos del contacto desde HubSpot
@@ -26,10 +23,8 @@ export async function processContact(payload: { contactId: string }): Promise<vo
     const { contactId } = payload;
     console.log(`👤 [Job:Contact] Procesando contacto HubSpot ${contactId}`);
 
-    // 1. Obtener datos frescos desde HubSpot
     const hsContact = await hubspot.getContactById(contactId);
 
-    // 2. Si ya tiene id_oracle → actualizar perfil existente en Oracle
     if (hsContact.id_oracle) {
         console.log(
             `🔄 [Job:Contact] Contacto ${contactId} ya tiene Oracle ID ${hsContact.id_oracle}. Actualizando...`
@@ -39,20 +34,62 @@ export async function processContact(payload: { contactId: string }): Promise<vo
             lastname: hsContact.lastName,
             email: hsContact.email,
         });
-        console.log(
-            `✅ [Job:Contact] Perfil Oracle ${hsContact.id_oracle} actualizado.`
+        console.log(`✅ [Job:Contact] Perfil Oracle ${hsContact.id_oracle} actualizado.`);
+        return;
+    }
+
+    const profileData = mapHubSpotContactToGuestProfile(hsContact);
+    const oracleId = await oracle.createGuestProfile(profileData);
+    await hubspot.updateOracleId(contactId, oracleId);
+
+    console.log(`✅ [Job:Contact] Contacto ${contactId} → Oracle Guest ${oracleId}`);
+}
+
+// ============================================================================
+// 🗑️ ELIMINAR Contact
+//
+// Disparado por: POST /webhook/hubspot/contact/delete
+// Trigger HubSpot: contact.deletion
+//
+// ⚠️ El payload de contact.deletion NO incluye propiedades del objeto.
+//    Solo entrega objectId. Se lee el objeto archivado (archived=true)
+//    para recuperar id_oracle antes de operar en Oracle.
+//
+// Acción en Oracle:
+//   DELETE /crm/v1/profiles/{id_oracle}   operationId: deleteProfile
+//   Oracle ANONIMIZA el perfil (borra datos personales, conserva el registro
+//   por cumplimiento de auditoría). No es eliminación permanente.
+// ============================================================================
+
+export async function deleteContact(payload: { contactId: string }): Promise<void> {
+    const { contactId } = payload;
+    console.log(`🗑️ [Job:DeleteContact] Eliminando Contact HubSpot ${contactId}`);
+
+    // Leer el objeto archivado para obtener id_oracle.
+    // HubSpot mantiene el objeto ~90 días después de la eliminación.
+    const archived = await hubspot.getArchivedContactById(contactId);
+
+    if (!archived) {
+        // Ya fue purgado definitivamente — no hay nada que hacer en Oracle.
+        console.warn(
+            `⚠️ [Job:DeleteContact] Contact ${contactId} ya no existe en HubSpot ` +
+            `(ni archivado). No se puede obtener id_oracle. Operación omitida.`
         );
         return;
     }
 
-    // 3. Sin id_oracle → crear perfil Guest nuevo en Oracle
-    const profileData = mapHubSpotContactToGuestProfile(hsContact);
-    const oracleId = await oracle.createGuestProfile(profileData);
+    if (!archived.id_oracle) {
+        console.log(
+            `ℹ️ [Job:DeleteContact] Contact ${contactId} no tenía id_oracle. ` +
+            `No hay acción en Oracle.`
+        );
+        return;
+    }
 
-    // 4. Guardar el id_oracle en el Contacto de HubSpot
-    await hubspot.updateOracleId(contactId, oracleId);
+    // DELETE /crm/v1/profiles/{profileId} → anonimiza el perfil Guest
+    await oracle.anonymizeProfile(archived.id_oracle);
 
     console.log(
-        `✅ [Job:Contact] Contacto ${contactId} → Oracle Guest ${oracleId}`
+        `✅ [Job:DeleteContact] Contact ${contactId} → Oracle perfil ${archived.id_oracle} anonimizado.`
     );
 }

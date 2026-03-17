@@ -12,9 +12,16 @@ import { randomUUID } from "crypto";
 // considerar agregar persistencia con SQLite.
 // ============================================================================
 
-// ── Cambio: se agrega "company" al union type ────────────────────────────────
-// Requiere actualizar dispatch() en worker.ts y agregar processCompany.ts
-export type JobType = "contact" | "deal" | "company";
+// ── Cambio v4.0: se agregan "delete-contact", "delete-company", "delete-deal" ─
+// Cada tipo de deletion tiene su propio job type para que el worker pueda
+// despacharlos al handler correcto sin ambigüedad.
+export type JobType =
+    | "contact"
+    | "deal"
+    | "company"
+    | "delete-contact"
+    | "delete-company"
+    | "delete-deal";
 
 export interface Job {
     id: string;

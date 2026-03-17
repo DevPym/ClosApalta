@@ -12,11 +12,10 @@ const oracle = new OracleClient();
 const hubspot = new HubSpotClient();
 
 // ============================================================================
-// 🏨 JOB: Procesar Deal
+// 🏨 CREAR / ACTUALIZAR Deal (reserva)
 //
-// Lógica pura extraída del webhook POST /webhook/hubspot/deal.
-// No recibe req/res — solo datos y lanza excepciones si algo falla.
-// El worker en queue/worker.ts maneja los reintentos.
+// Disparado por: POST /webhook/hubspot/deal
+// Triggers HubSpot: deal.creation | deal.propertyChange
 //
 // Flujo (7 pasos):
 //   1. Obtener Deal completo desde HubSpot
@@ -44,8 +43,6 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
     // ── PASO 2: Contactos con etiquetas ─────────────────────────────────────
     const associations = await hubspot.getAssociatedContacts(dealId);
     if (associations.length === 0) {
-        // Lanzar error para que el worker lo reintente —
-        // el contacto puede no estar asociado aún por latencia de HubSpot.
         throw new Error(
             `Deal ${dealId} no tiene contactos asociados. Se reintentará.`
         );
@@ -74,7 +71,6 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
         })
     );
 
-    // Seguridad: si ninguno tiene etiqueta de principal, el primero lo es
     if (!guestProfiles.some((g) => g.isPrimary)) {
         guestProfiles[0]!.isPrimary = true;
         console.log(
@@ -94,23 +90,19 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
         let companyOracleId = hsCompany.id_oracle;
 
         if (!companyOracleId) {
-            const oracleProfileType = resolveOracleCompanyType(
-                hsCompany.tipo_de_empresa
-            );
             console.warn(
                 `⚠️ [Job:Deal] Company "${hsCompany.name}" no tiene id_oracle. ` +
                 `El webhook de company no se procesó antes. ` +
                 `Creando en Oracle solo con nombre — revisar webhook de Company en HubSpot.`
             );
+            const oracleProfileType = resolveOracleCompanyType(hsCompany.tipo_de_empresa);
             companyOracleId = await oracle.createCompanyProfile(
                 hsCompany.name,
                 oracleProfileType
             );
             await hubspot.updateCompany(hsCompany.id, { id_oracle: companyOracleId });
         } else {
-            console.log(
-                `ℹ️ [Job:Deal] Company ya tiene Oracle ID: ${companyOracleId}`
-            );
+            console.log(`ℹ️ [Job:Deal] Company ya tiene Oracle ID: ${companyOracleId}`);
         }
 
         if (hsCompany.tipo_de_empresa === "Agencia") {
@@ -138,9 +130,7 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
         existingOracleId !== "" &&
         existingOracleId !== "undefined"
     ) {
-        console.log(
-            `🔄 [Job:Deal] Actualizando reserva Oracle ${existingOracleId}...`
-        );
+        console.log(`🔄 [Job:Deal] Actualizando reserva Oracle ${existingOracleId}...`);
         const updatePayload = {
             reservations: [
                 {
@@ -173,7 +163,7 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
         );
         await new Promise((resolve) => setTimeout(resolve, 600));
         const freshRes = await oracle.getReservation(internalId);
-        confirmationId = findConfirmationId(freshRes) ?? undefined;
+        confirmationId = findConfirmationId(freshRes) ?? null;
     }
 
     const finalConfirmation = confirmationId || currentConfirmation || internalId;
@@ -201,24 +191,73 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
 }
 
 // ============================================================================
-// 🔍 FUNCIÓN RASTREADORA DE CONFIRMATION NUMBER
-// Movida aquí desde index.ts porque solo la necesita processDeal.
+// 🗑️ ELIMINAR Deal (cancela reserva en Oracle)
+//
+// Disparado por: POST /webhook/hubspot/deal/delete
+// Trigger HubSpot: deal.deletion
+//
+// ⚠️ RESTRICCIÓN VERIFICADA en ApiOracleReservations.json:
+//    No existe eliminación permanente para reservas confirmadas en Oracle.
+//    El único mecanismo disponible es la cancelación:
+//    POST /hotels/{hotelId}/reservations/{reservationId}/cancellations
+//    operationId: postCancelReservation
+//
+// ⚠️ reason.code debe ser un código válido configurado en OPERA Cloud.
+//    Verificar con el equipo Oracle el código correcto para tu instancia.
+//    Si Oracle devuelve 400, revisar console.error para el detalle del error.
 // ============================================================================
-function findConfirmationId(obj: any): string | undefined {
-    if (!obj || typeof obj !== "object") return undefined;
-    if (Array.isArray(obj)) {
-        for (const item of obj) {
-            const found = findConfirmationId(item);
-            if (found) return found;
-        }
-        return undefined;
+
+const CANCELLATION_REASON_CODE = "OTHR";
+
+export async function deleteDeal(payload: { dealId: string }): Promise<void> {
+    const { dealId } = payload;
+    console.log(`🗑️ [Job:DeleteDeal] Eliminando Deal HubSpot ${dealId}`);
+
+    // Leer el deal archivado para obtener id_oracle.
+    // HubSpot mantiene el objeto ~90 días después de la eliminación.
+    const archived = await hubspot.getArchivedDealById(dealId);
+
+    if (!archived) {
+        console.warn(
+            `⚠️ [Job:DeleteDeal] Deal ${dealId} ya no existe en HubSpot ` +
+            `(ni archivado). No se puede obtener id_oracle. Operación omitida.`
+        );
+        return;
     }
-    if (obj.type?.toString().toUpperCase() === "CONFIRMATION" && obj.id) {
-        return String(obj.id);
+
+    if (!archived.id_oracle) {
+        console.log(
+            `ℹ️ [Job:DeleteDeal] Deal ${dealId} no tenía id_oracle. ` +
+            `La reserva nunca fue sincronizada. No hay acción en Oracle.`
+        );
+        return;
     }
-    for (const key in obj) {
-        const found = findConfirmationId(obj[key]);
-        if (found) return found;
-    }
-    return undefined;
+
+    // POST /hotels/{hotelId}/reservations/{id_oracle}/cancellations
+    const cancellationNumber = await oracle.cancelReservation(
+        archived.id_oracle,
+        CANCELLATION_REASON_CODE
+    );
+
+    console.log(
+        `✅ [Job:DeleteDeal] Deal ${dealId} → Reserva Oracle ${archived.id_oracle} cancelada. ` +
+        `Número de cancelación: ${cancellationNumber ?? "no devuelto por Oracle"}`
+    );
+}
+
+// ============================================================================
+// 🔍 FUNCIÓN RASTREADORA DE CONFIRMATION NUMBER
+// ============================================================================
+
+function findConfirmationId(data: any): string | null {
+    if (!data) return null;
+    const list =
+        data?.reservationIdList ||
+        data?.reservations?.[0]?.reservationIdList ||
+        [];
+    const found = list.find(
+        (item: any) =>
+            item.type === "Confirmation" || item.type === "confirmation"
+    );
+    return found?.id ?? null;
 }

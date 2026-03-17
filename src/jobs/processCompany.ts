@@ -9,66 +9,46 @@ const oracle = new OracleClient();
 const hubspot = new HubSpotClient();
 
 // ============================================================================
-// 🏢 JOB: Procesar Company (Empresa / Agencia de viajes)
+// 🏢 CREAR / ACTUALIZAR Company
 //
 // Disparado por: POST /webhook/hubspot/company
 // Triggers HubSpot: company.creation | company.propertyChange
-//
-// Lógica pura extraída del webhook. No recibe req/res — solo datos.
-// El worker en queue/worker.ts maneja los reintentos con backoff exponencial.
 //
 // Flujo:
 //   1. Obtener datos frescos de la Company desde HubSpot (todos los campos)
 //   2. Validar que el campo 'name' exista (obligatorio en Oracle)
 //   3. Si ya tiene id_oracle → actualizar perfil existente en Oracle
-//      Endpoint verificado: PUT /crm/v1/profiles/{id_oracle}  (putProfile)
+//      PUT /crm/v1/profiles/{id_oracle}   operationId: putProfile
 //   4. Si no tiene id_oracle → crear perfil nuevo en Oracle
-//      Endpoint verificado: POST /crm/v1/companies           (postCompanyProfile)
-//      Determinar profileType: resolveOracleCompanyType(tipo_de_empresa)
-//        "Agencia" → "Agent"     → Oracle Travel Agent profile
-//        cualquier otro → "Company" → Oracle Company profile
+//      POST /crm/v1/companies             operationId: postCompanyProfile
+//      tipo_de_empresa = "Agencia" → profileType "Agent"
+//      cualquier otro valor        → profileType "Company"
 //   5. Guardar el id_oracle devuelto por Oracle de vuelta en HubSpot
-//
-// Retorno esperado:
-//   El id interno de Oracle (corporateId/profileId) queda guardado en
-//   la propiedad 'id_oracle' del objeto Company en HubSpot.
 // ============================================================================
 
 export async function processCompany(payload: { companyId: string }): Promise<void> {
     const { companyId } = payload;
     console.log(`🏢 [Job:Company] Procesando Company HubSpot ${companyId}`);
 
-    // ── PASO 1: Datos frescos de la Company desde HubSpot ───────────────────
-    // getCompanyById() ahora devuelve todos los campos de HubSpotCompanyData:
-    // name, phone, email, address, city, country, iata_code, tipo_de_empresa, id_oracle
     const hsCompany: HubSpotCompanyData | null = await hubspot.getCompanyById(companyId);
 
     if (!hsCompany) {
-        // getCompanyById ya registró el error; lanzamos para que el worker reintente
         throw new Error(
             `[Job:Company] No se pudo obtener la Company ${companyId} de HubSpot.`
         );
     }
 
-    // ── PASO 2: Validar campo obligatorio ────────────────────────────────────
-    // Oracle requiere companyName para cualquier operación sobre el perfil.
     if (!hsCompany.name || !hsCompany.name.trim()) {
-        // No reintentamos: si no tiene nombre no hay nada que hacer.
-        // Registramos y salimos limpiamente (sin throw).
         console.warn(
-            `⚠️ [Job:Company] Company ${companyId} no tiene nombre (campo 'name' vacío). Sincronización omitida.`
+            `⚠️ [Job:Company] Company ${companyId} no tiene nombre. Sincronización omitida.`
         );
         return;
     }
 
-    // ── PASO 3: Ya tiene id_oracle → ACTUALIZAR perfil en Oracle ─────────────
     if (hsCompany.id_oracle) {
         console.log(
             `🔄 [Job:Company] Company ${companyId} ya tiene Oracle ID ${hsCompany.id_oracle}. Actualizando...`
         );
-
-        // updateCompanyProfile usa PUT /crm/v1/profiles/{id_oracle}
-        // Verificado en ApiOracleCRM.json: operationId putProfile
         await oracle.updateCompanyProfile(hsCompany.id_oracle, {
             name: hsCompany.name,
             phone: hsCompany.phone,
@@ -77,33 +57,63 @@ export async function processCompany(payload: { companyId: string }): Promise<vo
             city: hsCompany.city,
             country: hsCompany.country,
         });
-
         console.log(
             `✅ [Job:Company] Company ${companyId} → Oracle perfil ${hsCompany.id_oracle} actualizado.`
         );
         return;
     }
 
-    // ── PASO 4: Sin id_oracle → CREAR perfil nuevo en Oracle ─────────────────
-    // resolveOracleCompanyType:  tipo_de_empresa="Agencia" → "Agent"
-    //                            cualquier otro valor      → "Company"
     const profileType = resolveOracleCompanyType(hsCompany.tipo_de_empresa ?? "");
-
     console.log(
         `📡 [Job:Company] Creando perfil Oracle tipo "${profileType}" para "${hsCompany.name}"`
     );
 
-    // createCompanyProfile usa POST /crm/v1/companies
-    // Verificado en ApiOracleCRM.json: operationId postCompanyProfile
-    // Devuelve el corporateId (ID interno de Oracle)
     const oracleId = await oracle.createCompanyProfile(hsCompany.name, profileType);
-
-    // ── PASO 5: Guardar id_oracle en HubSpot ─────────────────────────────────
-    // updateCompany escribe la propiedad 'id_oracle' en el objeto Company de HubSpot.
-    // Esta es la misma propiedad 'id_oracle' usada en contactos y deals.
     await hubspot.updateCompany(companyId, { id_oracle: oracleId });
 
     console.log(
         `✅ [Job:Company] Company ${companyId} "${hsCompany.name}" → Oracle ${profileType} ID: ${oracleId}`
+    );
+}
+
+// ============================================================================
+// 🗑️ ELIMINAR Company
+//
+// Disparado por: POST /webhook/hubspot/company/delete
+// Trigger HubSpot: company.deletion
+//
+// ⚠️ No existe DELETE /crm/v1/companies/{id} en la API oficial de Oracle.
+//    La anonimización de empresas usa el mismo endpoint que perfiles Guest:
+//    DELETE /crm/v1/profiles/{profileId}   operationId: deleteProfile
+//    Aplica tanto a profileType "Company" como "Agent".
+// ============================================================================
+
+export async function deleteCompany(payload: { companyId: string }): Promise<void> {
+    const { companyId } = payload;
+    console.log(`🗑️ [Job:DeleteCompany] Eliminando Company HubSpot ${companyId}`);
+
+    const archived = await hubspot.getArchivedCompanyById(companyId);
+
+    if (!archived) {
+        console.warn(
+            `⚠️ [Job:DeleteCompany] Company ${companyId} ya no existe en HubSpot ` +
+            `(ni archivada). No se puede obtener id_oracle. Operación omitida.`
+        );
+        return;
+    }
+
+    if (!archived.id_oracle) {
+        console.log(
+            `ℹ️ [Job:DeleteCompany] Company ${companyId} no tenía id_oracle. ` +
+            `No hay acción en Oracle.`
+        );
+        return;
+    }
+
+    // DELETE /crm/v1/profiles/{profileId} → anonimiza el perfil Company/Agent
+    await oracle.anonymizeProfile(archived.id_oracle);
+
+    console.log(
+        `✅ [Job:DeleteCompany] Company ${companyId} → Oracle perfil ${archived.id_oracle} anonimizado.`
     );
 }
