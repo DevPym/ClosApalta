@@ -19,7 +19,7 @@
 
 import express from 'express';
 import type { Request, Response } from 'express';
-import { mapOracleToUnified } from '../application/mappers.js';
+// import { mapOracleToUnified } from '../application/mappers.js';
 import { HubSpotClient } from '../infrastructure/hubspot/HubSpotClient.js';
 
 const hubspotClient = new HubSpotClient();
