@@ -97,6 +97,11 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
             const oracleProfileType = resolveOracleCompanyType(
                 hsCompany.tipo_de_empresa
             );
+            console.warn(
+                `⚠️ [Job:Deal] Company "${hsCompany.name}" no tiene id_oracle. ` +
+                `El webhook de company no se procesó antes. ` +
+                `Creando en Oracle solo con nombre — revisar webhook de Company en HubSpot.`
+            );
             companyOracleId = await oracle.createCompanyProfile(
                 hsCompany.name,
                 oracleProfileType

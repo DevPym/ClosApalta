@@ -1,7 +1,6 @@
 // 1 - Capa de entrada (index.ts) — recibe webhooks, encola jobs, responde inmediatamente. No tiene lógica de negocio.
 
 
-
 import express from "express";
 import type { Request, Response } from "express";
 import { config } from "./config/index.js";
@@ -30,8 +29,8 @@ app.get("/", (_req: Request, res: Response) => {
     endpoints: [
       "POST /webhook/hubspot/contact  (contact.creation | contact.propertyChange)",
       "POST /webhook/hubspot/deal     (deal.creation | deal.propertyChange)",
-      "GET  /sync-to-oracle/:hsId     (solo uso manual)",
       "POST /webhook/hubspot/company  (company.creation | company.propertyChange)",
+      "GET  /sync-to-oracle/:hsId     (solo uso manual)",
     ],
   });
 });

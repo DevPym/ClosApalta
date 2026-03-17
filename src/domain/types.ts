@@ -104,6 +104,7 @@ export interface HubSpotCompanyData {
   address: string | undefined;
   city: string | undefined;
   country: string | undefined;
+  tipo_de_empresa: string | undefined; // Ej: "Agencia", "Hotel", "Corporativo"
 
   // — Identificador de agencia de viajes —
   // Si tiene código IATA → Oracle profileType = "Agent" (TravelAgent en reserva)
