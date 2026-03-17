@@ -1,3 +1,7 @@
+// 4.1 - Capa de infraestructura (infrastructure/) — contiene adaptadores específicos para HubSpot, Oracle, etc. No tiene lógica de negocio, solo llamadas a APIs externas.
+
+
+
 import hubspot from "@hubspot/api-client";
 import { config } from "../../config/index.js";
 

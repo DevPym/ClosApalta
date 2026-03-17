@@ -1,3 +1,5 @@
+// 3.2 - Capa de aplicación (jobs/) — contiene la lógica de negocio pura. No sabe nada de HTTP ni de la cola.
+
 import { OracleClient } from "../infrastructure/oracle/OracleClient.js";
 import { HubSpotClient } from "../infrastructure/hubspot/HubSpotClient.js";
 import {

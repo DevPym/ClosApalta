@@ -1,3 +1,32 @@
+/**
+ * src/infrastructure/oracle/OracleStreamer.ts
+ * 
+ * 4.3 - Capa de infraestructura (infrastructure/) — contiene adaptadores específicos para Oracle Streaming API. No tiene lógica de negocio, solo conexión WebSocket y manejo de mensajes.
+ *
+ * ⚠️  MÓDULO INACTIVO — No instanciar ni importar desde index.ts.
+ *
+ * Propósito: Conexión WebSocket con Oracle OHIP Streaming API para recibir
+ * eventos de perfiles y reservas en tiempo real (GraphQL-WS protocol).
+ *
+ * Estado: Pendiente de activación. Oracle Streaming API requiere un ticket
+ * de habilitación separado en el portal OHIP. Una vez habilitado:
+ *
+ *   1. Agregar en src/index.ts:
+ *        import { OracleStreamer } from "./infrastructure/oracle/OracleStreamer.js";
+ *        import { processContact } from "./jobs/processContact.js";
+ *
+ *   2. Instanciar después de crear `oracle`:
+ *        const streamer = new OracleStreamer(oracle, async (data) => {
+ *          queue.push("contact", { contactId: data.profileIdList?.[0]?.id });
+ *        });
+ *
+ *   3. Activar en app.listen():
+ *        streamer.connect();
+ *
+ * TODO: Implementar reconexión automática con backoff exponencial en
+ *       el handler ws.on("close").
+ */
+
 import WebSocket from "ws";
 import crypto from "crypto";
 import { config } from "../../config/index.js";
@@ -27,7 +56,6 @@ export class OracleStreamer {
 
         try {
             await this.oracleClient.authenticate();
-            // ✅ FIX #11: Usamos el método público en vez de acceder con "as any"
             const token = this.oracleClient.getAccessToken();
 
             if (!token) {
@@ -47,8 +75,6 @@ export class OracleStreamer {
             });
 
             this.ws.on("message", (data: WebSocket.RawData) => {
-                // ✅ FIX #12: Eliminada la variable "message" que se declaraba sin usarse.
-                //    data.toString() se llama una sola vez.
                 try {
                     this.handleMessage(JSON.parse(data.toString()));
                 } catch (parseError: any) {
@@ -127,7 +153,6 @@ export class OracleStreamer {
         this.ws?.send(JSON.stringify(subscribeQuery));
     }
 
-    // 🫀 Mantiene la conexión viva enviando un ping cada 15 segundos
     private startPing(): void {
         this.pingInterval = setInterval(() => {
             if (this.ws?.readyState === WebSocket.OPEN) {

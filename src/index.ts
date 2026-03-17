@@ -1,3 +1,7 @@
+// 1 - Capa de entrada (index.ts) — recibe webhooks, encola jobs, responde inmediatamente. No tiene lógica de negocio.
+
+
+
 import express from "express";
 import type { Request, Response } from "express";
 import { config } from "./config/index.js";

@@ -1,3 +1,5 @@
+// 2 - Capa de cola (queue/) — almacena jobs pendientes y los procesa en segundo plano con reintentos automáticos. No sabe nada de HubSpot ni Oracle.
+
 import { randomUUID } from "crypto";
 
 // ============================================================================

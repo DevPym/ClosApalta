@@ -24,6 +24,15 @@ export class OracleClient {
     }
   }
 
+  /**
+   * Expone el token actual para módulos externos que lo necesiten.
+   * OracleStreamer lo usa para el header Authorization del WebSocket.
+   * Retorna null si aún no se ha autenticado.
+   */
+  getAccessToken(): string | null {
+    return this.accessToken;
+  }
+
   async authenticate(): Promise<void> {
     const auth = Buffer.from(
       `${config.oracle.clientId}:${config.oracle.clientSecret}`
