@@ -1,23 +1,3 @@
-// Middleware de verificación de firma para webhooks de HubSpot.
-//
-// HubSpot firma cada request con X-HubSpot-Signature-v3 usando el Client Secret
-// de la app privada. Sin esta validación, cualquiera con acceso a la URL puede
-// enviar payloads maliciosos.
-//
-// Documentación oficial:
-// https://developers.hubspot.com/docs/api/webhooks/webhooks-overview#security
-//
-// Algoritmo:
-//   HMAC-SHA256( clientSecret, "POST" + url + bodyString + timestamp )
-//   → comparar con X-HubSpot-Signature-v3 (base64)
-//
-// ⚠️ Requiere que Express.json() ya haya parseado el body ANTES de este middleware,
-//    y que el request guarde el raw body. La comparación se hace sobre el JSON
-//    serializado (req.body).
-//
-// Uso en index.ts:
-//   app.use('/webhook/hubspot', verifyHubSpotSignature);
-
 import { createHmac, timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import { config } from "../config/index.js";
@@ -33,7 +13,7 @@ export function verifyHubSpotSignature(
   const signature = req.headers["x-hubspot-signature-v3"] as string | undefined;
   const timestamp = req.headers["x-hubspot-request-timestamp"] as string | undefined;
 
-  // Si no viene firma, rechazar
+  // Si no viene firma, rechazar para asegurar que el request viene de HubSpot
   if (!signature || !timestamp) {
     console.warn(
       `⚠️ [Signature] Request sin firma HubSpot rechazado. ` +
@@ -45,7 +25,7 @@ export function verifyHubSpotSignature(
 
   // Validar que el timestamp no sea muy antiguo (protección anti-replay)
   const ts = parseInt(timestamp, 10);
-  if (isNaN(ts) || Date.now() - ts > MAX_TIMESTAMP_AGE_MS) {
+  if (isNaN(ts) || Math.abs(Date.now() - ts) > MAX_TIMESTAMP_AGE_MS) {
     console.warn(
       `⚠️ [Signature] Timestamp expirado o inválido: ${timestamp}. ` +
       `Path: ${req.path}`
@@ -54,10 +34,20 @@ export function verifyHubSpotSignature(
     return;
   }
 
-  // Reconstruir la firma esperada
-  // HubSpot firma: método + URL completa + body (JSON serializado) + timestamp
-  const bodyString = JSON.stringify(req.body);
-  const fullUrl = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+  /**
+   * RECONSTRUCCIÓN DE LA FIRMA (Cambios críticos):
+   * * 1. Usar el body sin procesar (un-parsed body) según la documentación.
+   * Requiere que en index.ts hayas configurado express.json({ verify: ... }).
+   */
+  const bodyString = (req as any).rawBody?.toString() || "";
+
+  /**
+   * 2. Corregir Protocolo y URL para Railway:
+   * En Railway, el protocolo interno suele ser http, pero HubSpot firma con https.
+   */
+  const protocol = req.headers['x-forwarded-proto'] || 'https';
+  const fullUrl = `${protocol}://${req.get("host")}${req.originalUrl}`;
+
   const payload = `POST${fullUrl}${bodyString}${timestamp}`;
 
   const expectedSignature = createHmac("sha256", config.hubspot.clientSecret)
@@ -66,8 +56,8 @@ export function verifyHubSpotSignature(
 
   // Comparación segura (evita timing attacks)
   try {
-    const sigBuffer = Buffer.from(signature);
-    const expectedBuffer = Buffer.from(expectedSignature);
+    const sigBuffer = Buffer.from(signature, 'utf8');
+    const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
 
     if (
       sigBuffer.length !== expectedBuffer.length ||
@@ -79,7 +69,7 @@ export function verifyHubSpotSignature(
       res.status(401).json({ error: "Firma inválida" });
       return;
     }
-  } catch {
+  } catch (error) {
     res.status(401).json({ error: "Error al verificar firma" });
     return;
   }

@@ -10,7 +10,16 @@ import { startWorker } from "./queue/worker.js";
 import { verifyHubSpotSignature } from "./middleware/hubspotSignature.js";
 
 const app = express();
-app.use(express.json());
+
+// 1. Indicar a Express que confíe en el proxy (necesario para req.protocol en Railway)
+app.set('trust proxy', true);
+
+// 2. Modificar el middleware de JSON para capturar el rawBody
+app.use(express.json({
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 // ============================================================================
 // 🩺 HEALTH CHECK
