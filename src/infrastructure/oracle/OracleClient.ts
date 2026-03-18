@@ -3,20 +3,18 @@ import { config } from "../../config/index.js";
 
 export class OracleClient {
   private accessToken: string | null = null;
-  // Fix: guardar timestamp de expiración para renovar antes de que caduque
   private tokenExpiresAt: number = 0;
 
   private getHeaders() {
     return {
       Authorization: `Bearer ${this.accessToken}`,
       "x-app-key": config.oracle.appKey,
-      EnterpriseId: "CLOSAP",
+      EnterpriseId: config.oracle.enterpriseId,
       "x-hotelid": config.oracle.hotelId,
       "Content-Type": "application/json",
     };
   }
 
-  // Fix: verificar expiración antes de cada llamada (margen de 60s)
   private async ensureToken(): Promise<void> {
     const margin = 60_000;
     if (!this.accessToken || Date.now() >= this.tokenExpiresAt - margin) {
@@ -50,14 +48,13 @@ export class OracleClient {
           headers: {
             Authorization: `Basic ${auth}`,
             "x-app-key": config.oracle.appKey,
-            EnterpriseId: "CLOSAP",
+            EnterpriseId: config.oracle.enterpriseId,
             "Content-Type": "application/x-www-form-urlencoded",
           },
         }
       );
 
       this.accessToken = response.data.access_token;
-      // Fix: guardar cuándo expira el token (expires_in viene en segundos)
       const expiresIn: number = response.data.expires_in ?? 3600;
       this.tokenExpiresAt = Date.now() + expiresIn * 1000;
       console.log(
@@ -75,39 +72,98 @@ export class OracleClient {
   // Endpoint: POST /crm/v1/profiles
   // =========================================================================
 
-  async createGuestProfile(profileData: any): Promise<string> {
+  async createGuestProfile(profileData: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string;
+    address?: string;
+    city?: string;
+    country?: string;
+    language?: string;
+    birthDate?: string;
+    gender?: string;
+    nationality?: string;
+    passportNo?: string;
+    vipStatus?: string;
+    loyaltyNumber?: string;
+  }): Promise<string> {
     await this.ensureToken();
 
-    const body = {
-      profileDetails: {
-        profileType: "Guest",
-        customer: {
-          personName: [
-            {
-              givenName: (profileData.firstName || "Huesped").trim(),
-              surname: (profileData.lastName || "Sin Apellido").trim(),
-              nameType: "Primary",
-            },
-          ],
-          language: "E",
+    const customer: any = {
+      personName: [
+        {
+          givenName: (profileData.firstName || "Huesped").trim(),
+          surname: (profileData.lastName || "Sin Apellido").trim(),
+          nameType: "Primary",
         },
-        emails: {
-          emailInfo: [
-            {
-              email: {
-                type: "EMAIL",
-                emailAddress: profileData.email.trim(),
-                primaryInd: true,
-              },
-            },
-          ],
-        },
-        profileAccessType: {
-          hotelId: config.oracle.hotelId,
-          sharedLevel: "Property",
-        },
+      ],
+      language: profileData.language || "E",
+    };
+
+    if (profileData.birthDate) customer.birthDate = profileData.birthDate;
+    if (profileData.gender) customer.gender = profileData.gender;
+    if (profileData.nationality) customer.nationality = profileData.nationality;
+    if (profileData.passportNo) customer.passportNo = profileData.passportNo;
+    if (profileData.vipStatus) customer.vipStatus = profileData.vipStatus;
+
+    const profileDetails: any = {
+      profileType: "Guest",
+      customer,
+      profileAccessType: {
+        hotelId: config.oracle.hotelId,
+        sharedLevel: "Property",
       },
     };
+
+    if (profileData.email) {
+      profileDetails.emails = {
+        emailInfo: [
+          {
+            email: {
+              type: "EMAIL",
+              emailAddress: profileData.email.trim(),
+              primaryInd: true,
+            },
+          },
+        ],
+      };
+    }
+
+    if (profileData.phone) {
+      profileDetails.telephones = {
+        telephoneInfo: [
+          {
+            telephone: {
+              phoneTechType: "PHONE",
+              phoneNumber: profileData.phone.trim(),
+              primaryInd: true,
+            },
+          },
+        ],
+      };
+    }
+
+    const hasAddress = profileData.address || profileData.city || profileData.country;
+    if (hasAddress) {
+      const addressBlock: any = { type: "HOME", primaryInd: true };
+      if (profileData.address) addressBlock.addressLine = [profileData.address.trim()];
+      if (profileData.city) addressBlock.cityName = profileData.city.trim();
+      if (profileData.country) addressBlock.country = { code: profileData.country.trim() };
+      profileDetails.addresses = { addressInfo: [{ address: addressBlock }] };
+    }
+
+    if (profileData.loyaltyNumber) {
+      profileDetails.loyalties = {
+        loyaltyInfo: [
+          {
+            loyaltyNumber: profileData.loyaltyNumber.trim(),
+            programCode: "RC", // Relais & Châteaux
+            primaryInd: true,
+          },
+        ],
+      };
+    }
 
     try {
       console.log(
@@ -115,7 +171,7 @@ export class OracleClient {
       );
       const response = await axios.post(
         `${config.oracle.baseUrl}/crm/v1/profiles`,
-        body,
+        { profileDetails },
         { headers: this.getHeaders() }
       );
 
@@ -138,7 +194,22 @@ export class OracleClient {
 
   async updateGuestProfile(
     oracleId: string,
-    properties: Record<string, any>
+    properties: {
+      firstname?: string;
+      lastname?: string;
+      email?: string;
+      phone?: string;
+      address?: string;
+      city?: string;
+      country?: string;
+      language?: string;
+      birthDate?: string;
+      gender?: string;
+      nationality?: string;
+      passportNo?: string;
+      vipStatus?: string;
+      loyaltyNumber?: string;
+    }
   ): Promise<void> {
     await this.ensureToken();
 
@@ -147,19 +218,27 @@ export class OracleClient {
       return;
     }
 
+    const customer: any = {
+      personName: [
+        {
+          givenName: (properties.firstname || "").trim(),
+          surname: properties.lastname.trim(),
+          nameType: "Primary",
+        },
+      ],
+    };
+
+    if (properties.language) customer.language = properties.language;
+    if (properties.birthDate) customer.birthDate = properties.birthDate;
+    if (properties.gender) customer.gender = properties.gender;
+    if (properties.nationality) customer.nationality = properties.nationality;
+    if (properties.passportNo) customer.passportNo = properties.passportNo;
+    if (properties.vipStatus) customer.vipStatus = properties.vipStatus;
+
     const body: any = {
       profileDetails: {
         profileType: "Guest",
-        customer: {
-          personName: [
-            {
-              givenName: (properties.firstname || "").trim(),
-              surname: properties.lastname.trim(),
-              nameType: "Primary",
-            },
-          ],
-          language: "E",
-        },
+        customer,
       },
     };
 
@@ -172,6 +251,41 @@ export class OracleClient {
               emailAddress: properties.email.trim(),
               primaryInd: true,
             },
+          },
+        ],
+      };
+    }
+
+    if (properties.phone) {
+      body.profileDetails.telephones = {
+        telephoneInfo: [
+          {
+            telephone: {
+              phoneTechType: "PHONE",
+              phoneNumber: properties.phone.trim(),
+              primaryInd: true,
+            },
+          },
+        ],
+      };
+    }
+
+    const hasAddress = properties.address || properties.city || properties.country;
+    if (hasAddress) {
+      const addressBlock: any = { type: "HOME", primaryInd: true };
+      if (properties.address) addressBlock.addressLine = [properties.address.trim()];
+      if (properties.city) addressBlock.cityName = properties.city.trim();
+      if (properties.country) addressBlock.country = { code: properties.country.trim() };
+      body.profileDetails.addresses = { addressInfo: [{ address: addressBlock }] };
+    }
+
+    if (properties.loyaltyNumber) {
+      body.profileDetails.loyalties = {
+        loyaltyInfo: [
+          {
+            loyaltyNumber: properties.loyaltyNumber.trim(),
+            programCode: "RC",
+            primaryInd: true,
           },
         ],
       };
@@ -190,7 +304,6 @@ export class OracleClient {
         `❌ [Oracle] updateGuestProfile ${oracleId} [${error.response?.status}]:`,
         detail
       );
-      // Fix: re-lanzar para que el caller sepa que falló
       throw error;
     }
   }
@@ -209,12 +322,6 @@ export class OracleClient {
   // Aplica a profileType: Guest, Company, Agent (Travel Agent).
   // =========================================================================
 
-  /**
-   * Anonimiza un perfil en Oracle (Guest, Company o Agent).
-   * Equivale a "olvidar" los datos personales del perfil.
-   *
-   * @param oracleId - ID interno del perfil en Oracle
-   */
   async anonymizeProfile(oracleId: string): Promise<void> {
     await this.ensureToken();
 
@@ -247,28 +354,14 @@ export class OracleClient {
   //
   // ⚠️ Oracle NO permite eliminar reservas confirmadas permanentemente.
   //   La cancelación es el único mecanismo disponible para ellas.
-  //   Devuelve un número de cancelación en:
-  //   response.cxlActivityLog[0].cancellationIdList[0].id
-  //
-  // ⚠️ reason.code debe ser un código válido configurado en OPERA Cloud.
-  //   Ver CANCELLATION_REASON_CODE en src/jobs/deleteDeal.ts.
   // =========================================================================
 
-  /**
-   * Cancela una reserva confirmada en Oracle.
-   *
-   * @param oracleReservationId - ID interno de la reserva en Oracle
-   * @param reasonCode          - Código de razón de cancelación (default: "OTHR")
-   * @returns                   - Número de cancelación (string) o null si Oracle no lo devuelve
-   */
   async cancelReservation(
     oracleReservationId: string,
-    reasonCode: string = "OTHR"
+    reasonCode: string = config.oracle.cancellationReasonCode
   ): Promise<string | null> {
     await this.ensureToken();
 
-    // Body según ejemplo oficial de ApiOracleReservations.json:
-    // { reason, reservations[{ reservationIdList, allowedActions, hotelId, cxlInstr }], verificationOnly }
     const body = {
       reason: {
         description: "Cancelled from HubSpot",
@@ -300,10 +393,6 @@ export class OracleClient {
         headers: this.getHeaders(),
       });
 
-      // Extraer cancellation number de la respuesta:
-      // response.data.cxlActivityLog[0].cancellationIdList[0].id
-      // Verificado en ApiOracleReservations.json > cancelReservationDetails >
-      // cxlActivityLog (array de cancellationActivityType) > cancellationIdList
       const cancellationNumber: string | null =
         response.data?.cxlActivityLog?.[0]?.cancellationIdList?.[0]?.id
         ?? null;
@@ -328,16 +417,8 @@ export class OracleClient {
   // =========================================================================
   // 🏢 PERFILES DE EMPRESA (Company / Travel Agent)
   // Endpoint: POST /crm/v1/companies
-  // Según la doc oficial de OHIP, tanto Company como TravelAgent
-  // se crean en /crm/v1/companies con el profileType correspondiente.
   // =========================================================================
 
-  /**
-   * Crea un perfil de empresa en Oracle.
-   * @param companyName - Nombre de la empresa (igual al de HubSpot)
-   * @param profileType - "Company" | "Agent" según tipo_de_empresa de HubSpot
-   * @returns El ID interno de Oracle (corporateId)
-   */
   async createCompanyProfile(
     companyName: string,
     profileType: "Company" | "Agent"
@@ -368,7 +449,6 @@ export class OracleClient {
         { headers: this.getHeaders() }
       );
 
-      // La API devuelve el ID en companyIdList o en el header Location
       const oracleId =
         response.data?.companyIdList?.[0]?.id ||
         response.headers.location?.split("/").pop();
@@ -396,27 +476,9 @@ export class OracleClient {
   // =========================================================================
   // 🏢 ACTUALIZAR PERFIL DE EMPRESA
   //
-  // Endpoint verificado en ApiOracleCRM.json:
-  //   PUT /crm/v1/profiles/{profileId}   operationId: putProfile
-  //
-  // IMPORTANTE: No existe PUT /crm/v1/companies/{corporateID} en la API
-  // oficial (solo GET). La actualización de empresas se hace mediante el
-  // endpoint genérico de perfiles, igual que updateGuestProfile().
-  //
-  // Campos soportados por este método (todos opcionales salvo companyName):
-  //   companyName  → profileDetails.company.companyName  (obligatorio en Oracle)
-  //   email        → profileDetails.emails
-  //   phone        → profileDetails.telephones
-  //   address      → profileDetails.addresses (addressLine, cityName, country)
+  // Endpoint: PUT /crm/v1/profiles/{profileId}   operationId: putProfile
   // =========================================================================
 
-  /**
-   * Actualiza un perfil de empresa existente en Oracle.
-   *
-   * @param oracleId   - ID interno del perfil en Oracle (el corporateId guardado en HubSpot)
-   * @param data       - Campos de empresa a actualizar (mínimo name es requerido)
-   * @returns          - void; lanza excepción si falla
-   */
   async updateCompanyProfile(
     oracleId: string,
     data: {
@@ -430,8 +492,6 @@ export class OracleClient {
   ): Promise<void> {
     await this.ensureToken();
 
-    // companyName es el único campo obligatorio para Oracle.
-    // Si no viene, no tiene sentido hacer el PUT.
     if (!data.name || !data.name.trim()) {
       console.log(
         `⚠️ [Oracle] updateCompanyProfile ${oracleId}: falta companyName obligatorio. Operación cancelada.`
@@ -439,9 +499,6 @@ export class OracleClient {
       return;
     }
 
-    // ── Body base: nombre de empresa ────────────────────────────────────────
-    // Según ApiOracleCRM.json > definitions > companyType:
-    //   companyName: "Name of the company."
     const body: any = {
       profileDetails: {
         company: {
@@ -451,9 +508,6 @@ export class OracleClient {
       },
     };
 
-    // ── Email (opcional) ─────────────────────────────────────────────────────
-    // Según ApiOracleCRM.json > definitions > companyProfileType > emails
-    // Estructura idéntica a updateGuestProfile()
     if (data.email && data.email.trim()) {
       body.profileDetails.emails = {
         emailInfo: [
@@ -468,9 +522,6 @@ export class OracleClient {
       };
     }
 
-    // ── Teléfono (opcional) ──────────────────────────────────────────────────
-    // Según ApiOracleCRM.json > definitions > telephoneType:
-    //   phoneNumber, phoneTechType, primaryInd
     if (data.phone && data.phone.trim()) {
       body.profileDetails.telephones = {
         telephoneInfo: [
@@ -485,10 +536,6 @@ export class OracleClient {
       };
     }
 
-    // ── Dirección (opcional) ─────────────────────────────────────────────────
-    // Según ApiOracleCRM.json > definitions > addressType:
-    //   addressLine (array), cityName, country { code, value }
-    // Se incluye solo si hay al menos un campo de dirección
     const hasAddress = data.address || data.city || data.country;
     if (hasAddress) {
       const addressBlock: any = {
@@ -509,7 +556,6 @@ export class OracleClient {
       console.log(
         `📡 [Oracle] Actualizando perfil empresa ${oracleId}: "${data.name}"`
       );
-      // PUT /crm/v1/profiles/{profileId}
       await axios.put(
         `${config.oracle.baseUrl}/crm/v1/profiles/${oracleId}`,
         body,
@@ -525,7 +571,6 @@ export class OracleClient {
         `❌ [Oracle] updateCompanyProfile ${oracleId} [${status}]:`,
         detail
       );
-      // Re-lanzar para que el worker pueda reintentar
       throw error;
     }
   }

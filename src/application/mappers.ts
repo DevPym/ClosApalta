@@ -1,4 +1,5 @@
-import type { UnifiedContact } from "../domain/types.js";
+import type { HubSpotContactData, GuestProfile } from "../domain/types.js";
+import { config } from "../config/index.js";
 
 // ============================================================================
 // 🛠️ UTILIDADES
@@ -101,6 +102,13 @@ const Maps = {
       Francés: "FR",
     },
   },
+  Gender: {
+    ToOracle: {
+      Masculino: "MALE",
+      Femenino: "FEMALE",
+      Otro: "UNKNOWN",
+    },
+  },
 };
 
 // ============================================================================
@@ -108,19 +116,45 @@ const Maps = {
 // ============================================================================
 
 /**
- * Mapea el payload de un Contacto de HubSpot al formato
- * que necesita OracleClient.createGuestProfile().
- * Solo se usan los campos que el flujo mínimo requiere.
+ * Mapea el payload completo de un Contacto de HubSpot al formato
+ * que necesita OracleClient.createGuestProfile() / updateGuestProfile().
+ * Incluye todos los campos opcionales disponibles en HubSpot.
  */
-export function mapHubSpotContactToGuestProfile(contact: any): {
+export function mapHubSpotContactToGuestProfile(contact: HubSpotContactData): {
   firstName: string;
   lastName: string;
   email: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  country?: string;
+  language?: string;
+  birthDate?: string;
+  gender?: string;
+  nationality?: string;
+  passportNo?: string;
+  vipStatus?: string;
+  loyaltyNumber?: string;
 } {
   return {
-    firstName: contact.firstName || contact.firstname || "Huesped",
-    lastName: contact.lastName || contact.lastname || "Sin Apellido",
+    firstName: contact.firstName || "Huesped",
+    lastName: contact.lastName || "Sin Apellido",
     email: contact.email || "",
+    phone: contact.phone || undefined,
+    address: contact.address || undefined,
+    city: contact.city || undefined,
+    country: contact.country || undefined,
+    language: contact.idioma_preferido
+      ? (Maps.Language.ToOracle[contact.idioma_preferido as keyof typeof Maps.Language.ToOracle] || undefined)
+      : undefined,
+    birthDate: contact.fecha_de_nacimiento || undefined,
+    gender: contact.sexo__genero_huesped_principal
+      ? (Maps.Gender.ToOracle[contact.sexo__genero_huesped_principal as keyof typeof Maps.Gender.ToOracle] || undefined)
+      : undefined,
+    nationality: contact.nacionalidad || undefined,
+    passportNo: contact.pasaporte || undefined,
+    vipStatus: contact.huesped_vip || undefined,
+    loyaltyNumber: contact.numero_de_fidelidad__relais__chateaux || undefined,
   };
 }
 
@@ -156,14 +190,6 @@ export function buildTravelAgentProfile(agencyOracleId: string): object {
 // ============================================================================
 
 /**
- * Tipo interno para perfiles de huésped ya procesados.
- */
-interface GuestProfile {
-  id: string;
-  isPrimary: boolean;
-}
-
-/**
  * Mapea las propiedades planas de un Deal de HubSpot al payload
  * que necesita Oracle para crear o actualizar una reserva.
  *
@@ -189,7 +215,6 @@ export function mapHubSpotReservationToOracle(
       ? "OWNERC"
       : (Maps.Room.ToOracle[roomType as keyof typeof Maps.Room.ToOracle] ?? roomType);
 
-  // Fix: usar isPrimary del perfil, no la posición en el array
   const reservationGuests = guestProfiles.map((profile) => ({
     profileInfo: {
       profileIdList: [{ type: "Profile", id: profile.id }],
@@ -199,7 +224,7 @@ export function mapHubSpotReservationToOracle(
 
   // Bloque base de la reserva
   const reservation: any = {
-    hotelId: config_hotelId(),
+    hotelId: config.oracle.hotelId,
     reservationGuests,
     roomStay: {
       roomRates: [
@@ -238,13 +263,4 @@ export function mapHubSpotReservationToOracle(
       reservation: [reservation],
     },
   };
-}
-
-// Helper interno: evita importar config directamente en mappers
-// El hotelId ya existe en OracleClient; aquí solo se necesita para el payload
-function config_hotelId(): string {
-  // Este valor se lee desde el OracleClient que ya tiene config importado.
-  // Como el mapper no debe importar config, se pasa como constante.
-  // Si el hotelId cambia, debe actualizarse aquí también.
-  return "CAR";
 }

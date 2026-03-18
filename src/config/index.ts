@@ -3,11 +3,12 @@ dotenv.config();
 
 export const config = {
   server: {
-    port: process.env.PORT || 3000,
+    port: parseInt(process.env.PORT || "3000", 10),
   },
   hubspot: {
     accessToken: process.env.HUBSPOT_ACCESS_TOKEN || "",
     appId: process.env.HUBSPOT_APP_ID || "32858611",
+    clientSecret: process.env.HUBSPOT_CLIENT_SECRET || "",
   },
   oracle: {
     baseUrl: process.env.ORACLE_BASE_URL || "",
@@ -18,18 +19,18 @@ export const config = {
     enterpriseId: process.env.ORACLE_ENTERPRISE_ID || "CLOSAP",
     username: process.env.ORACLE_USERNAME || "",
     password: process.env.ORACLE_PASSWORD || "",
+    cancellationReasonCode: process.env.ORACLE_CANCELLATION_REASON_CODE || "OTHR",
   },
 };
 
 // 🛡️ Validación de arranque: si falta alguna variable crítica, el puente no inicia.
-// ✅ FIX: Se agregaron ORACLE_BASE_URL, ORACLE_CLIENT_ID y ORACLE_CLIENT_SECRET
-//        que son necesarias para la autenticación OAuth pero no estaban validadas.
 const requiredConfigs: { val: string; name: string }[] = [
   { val: config.oracle.baseUrl, name: 'ORACLE_BASE_URL' },
   { val: config.oracle.clientId, name: 'ORACLE_CLIENT_ID' },
   { val: config.oracle.clientSecret, name: 'ORACLE_CLIENT_SECRET' },
   { val: config.oracle.appKey, name: 'ORACLE_APP_KEY' },
   { val: config.hubspot.accessToken, name: 'HUBSPOT_ACCESS_TOKEN' },
+  { val: config.hubspot.clientSecret, name: 'HUBSPOT_CLIENT_SECRET' },
 ];
 
 requiredConfigs.forEach(({ val, name }) => {

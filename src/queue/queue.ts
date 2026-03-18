@@ -18,14 +18,35 @@ export interface Job {
     createdAt: Date;
 }
 
+export interface DeadJob {
+    job: Job;
+    error: string;
+    failedAt: Date;
+}
+
 export class Queue {
     private jobs: Job[] = [];
+    private deadJobs: DeadJob[] = [];
 
     /**
      * Crea y encola un job NUEVO (attempts=0).
+     * Si ya existe un job pendiente del mismo tipo y payload, lo omite (deduplicación).
      * Usado por los webhooks al recibir un evento.
      */
     push(type: JobType, payload: Record<string, any>): string {
+        // Deduplicación: evitar jobs redundantes para el mismo objeto
+        const payloadKey = JSON.stringify(payload);
+        const duplicate = this.jobs.find(
+            (j) => j.type === type && JSON.stringify(j.payload) === payloadKey
+        );
+        if (duplicate) {
+            console.log(
+                `⚡ [Cola] Job duplicado omitido: tipo=${type} payload=${payloadKey}. ` +
+                `Ya existe job ${duplicate.id} pendiente.`
+            );
+            return duplicate.id;
+        }
+
         const id = randomUUID();
         this.jobs.push({ id, type, payload, attempts: 0, createdAt: new Date() });
         console.log(`📬 [Cola] Job ${id} (${type}) encolado. Pendientes: ${this.jobs.length}`);
@@ -52,8 +73,33 @@ export class Queue {
         return this.jobs.shift();
     }
 
+    /**
+     * Registra un job fallido en el dead letter store.
+     * Los dead jobs se pueden consultar en GET /dead-jobs.
+     */
+    addDeadJob(job: Job, error: Error): void {
+        this.deadJobs.push({
+            job,
+            error: error.message,
+            failedAt: new Date(),
+        });
+    }
+
+    getDeadJobs(): DeadJob[] {
+        return [...this.deadJobs];
+    }
+
+    clearDeadJobs(): void {
+        this.deadJobs = [];
+        console.log("🧹 [Cola] Dead jobs limpiados.");
+    }
+
     get size(): number {
         return this.jobs.length;
+    }
+
+    get deadSize(): number {
+        return this.deadJobs.length;
     }
 }
 

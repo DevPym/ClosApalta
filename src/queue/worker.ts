@@ -45,7 +45,7 @@ async function processNextJob(): Promise<void> {
             // ✅ FIX: usar retry() para conservar attempts y no crear loop infinito
             setTimeout(() => queue.retry(job), delayMs);
         } else {
-            logDeadJob(job, error);
+            markDeadJob(job, error);
         }
     }
 
@@ -65,7 +65,7 @@ async function dispatch(job: Job): Promise<void> {
     }
 }
 
-function logDeadJob(job: Job, error: any): void {
+function markDeadJob(job: Job, error: any): void {
     console.error("💀 [Worker] ================================");
     console.error(`💀 [Worker] Job ${job.id} agotó ${MAX_ATTEMPTS} intentos.`);
     console.error(`💀 [Worker] Tipo:    ${job.type}`);
@@ -73,6 +73,8 @@ function logDeadJob(job: Job, error: any): void {
     console.error(`💀 [Worker] Error:   ${error.message}`);
     console.error(`💀 [Worker] Creado:  ${job.createdAt.toISOString()}`);
     console.error("💀 [Worker] ================================");
+    // Guardar en dead letter store para diagnóstico vía GET /dead-jobs
+    queue.addDeadJob(job, error);
 }
 
 export function startWorker(): void {
