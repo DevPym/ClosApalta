@@ -4,9 +4,8 @@
 // ============================================================================
 export interface HubSpotContactData {
   // — Identificadores —
-  id: string;            // response.id del SDK (≡ hs_object_id)
-  hs_object_id: string;            // ID interno de HubSpot (mismo valor que id)
-  id_oracle: string | undefined; // Propiedad custom: ID del perfil en Oracle
+  id: string;                          // response.id del SDK (≡ hs_object_id)
+  id_oracle: string | undefined;       // Propiedad custom: ID del perfil en Oracle
 
   // — Datos personales —
   firstName: string | undefined;
@@ -24,9 +23,13 @@ export interface HubSpotContactData {
   // — Preferencias —
   idioma_preferido: string | undefined;
 
-  // — Vinculamiento HubSpot (IDs, no nombres) —
-  associatedCompanyId: string | null;  // ID de la empresa vinculada al contacto
-  associatedDealId: string | null;  // ID del negocio vinculado (primero encontrado)
+  // — Datos adicionales de huésped —
+  nacionalidad: string | undefined;
+  fecha_de_nacimiento: string | undefined;
+  sexo__genero_huesped_principal: string | undefined;
+  pasaporte: string | undefined;
+  huesped_vip: string | undefined;
+  numero_de_fidelidad__relais__chateaux: string | undefined;
 }
 
 // ============================================================================
@@ -76,7 +79,6 @@ export interface UnifiedReservation {
   numero_de_noches_de_estancia: string;
   es_pseudo_room?: boolean;
   agencia_de_viajes?: string;
-  id_synxis?: string;
 }
 
 // ============================================================================
@@ -86,6 +88,7 @@ export interface UnifiedReservation {
 export interface GuestProfile {
   id: string;
   isPrimary: boolean;
+  contactId: string;
 }
 
 // ============================================================================
@@ -94,8 +97,8 @@ export interface GuestProfile {
 // ============================================================================
 export interface HubSpotCompanyData {
   // — Identificadores —
-  id: string;            // response.id del SDK (hs_object_id de la empresa)
-  id_oracle: string | undefined; // Propiedad custom: ID del perfil en Oracle
+  id: string;                          // response.id del SDK (hs_object_id de la empresa)
+  id_oracle: string | undefined;       // Propiedad custom: ID del perfil en Oracle
 
   // — Datos de empresa —
   name: string | undefined;

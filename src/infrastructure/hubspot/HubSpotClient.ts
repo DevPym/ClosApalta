@@ -1,12 +1,11 @@
-// 4.1 - Capa de infraestructura (infrastructure/) — contiene adaptadores específicos para HubSpot, Oracle, etc. No tiene lógica de negocio, solo llamadas a APIs externas.
-
-
+// 4.1 - Capa de infraestructura (infrastructure/) — adaptador para HubSpot. No tiene lógica de negocio.
 
 import hubspot from "@hubspot/api-client";
 import { config } from "../../config/index.js";
+import type { HubSpotContactData, HubSpotCompanyData } from "../../domain/types.js";
 
 export class HubSpotClient {
-  public client: any;
+  private client: InstanceType<typeof hubspot.Client>;
 
   constructor() {
     this.client = new hubspot.Client({
@@ -18,20 +17,37 @@ export class HubSpotClient {
   // 👤 CONTACTOS
   // =========================================================================
 
-  async getContactById(contactId: string) {
+  async getContactById(contactId: string): Promise<HubSpotContactData> {
     const properties = [
       "firstname", "lastname", "email", "id_oracle",
+      "phone", "address", "city", "country",
+      "idioma_preferido", "nacionalidad",
+      "fecha_de_nacimiento", "sexo__genero_huesped_principal",
+      "pasaporte", "huesped_vip",
+      "numero_de_fidelidad__relais__chateaux",
     ];
     const response = await this.client.crm.contacts.basicApi.getById(
       contactId,
       properties
     );
+    const p = response.properties;
     return {
       id: response.id,
-      firstName: response.properties.firstname || "",
-      lastName: response.properties.lastname || "",
-      email: response.properties.email || "",
-      id_oracle: response.properties.id_oracle || null,
+      id_oracle: p.id_oracle || undefined,
+      firstName: p.firstname || undefined,
+      lastName: p.lastname || undefined,
+      email: p.email || undefined,
+      phone: p.phone || undefined,
+      address: p.address || undefined,
+      city: p.city || undefined,
+      country: p.country || undefined,
+      idioma_preferido: p.idioma_preferido || undefined,
+      nacionalidad: p.nacionalidad || undefined,
+      fecha_de_nacimiento: p.fecha_de_nacimiento || undefined,
+      sexo__genero_huesped_principal: p.sexo__genero_huesped_principal || undefined,
+      pasaporte: p.pasaporte || undefined,
+      huesped_vip: p.huesped_vip || undefined,
+      numero_de_fidelidad__relais__chateaux: p.numero_de_fidelidad__relais__chateaux || undefined,
     };
   }
 
@@ -80,8 +96,6 @@ export class HubSpotClient {
 
   /**
    * Crea o actualiza un contacto en HubSpot.
-   * Fix: el SDK de HubSpot expone el status 409 en error.response?.status,
-   * no en error.code. El 4to argumento de basicApi.update() es idProperty.
    */
   async syncContact(unifiedContact: any) {
     const { email, firstName, lastName, id_oracle } = unifiedContact;
@@ -95,10 +109,8 @@ export class HubSpotClient {
     try {
       return await this.client.crm.contacts.basicApi.create({ properties });
     } catch (error: any) {
-      // Fix: verificar status correcto del SDK de HubSpot
       const status = error.response?.status || error.statusCode;
       if (status === 409) {
-        // Fix: idProperty es el 4to argumento, no va dentro del cuerpo
         return await this.client.crm.contacts.basicApi.update(
           email,
           { properties },
@@ -118,7 +130,7 @@ export class HubSpotClient {
    * Obtiene la Company de HubSpot asociada a un Deal.
    * Retorna null si el Deal no tiene empresa asociada.
    */
-  async getCompanyByDealId(dealId: string): Promise<any | null> {
+  async getCompanyByDealId(dealId: string): Promise<HubSpotCompanyData | null> {
     try {
       const response =
         await this.client.crm.associations.v4.basicApi.getPage(
@@ -131,8 +143,7 @@ export class HubSpotClient {
         return null;
       }
 
-      // Tomamos la primera empresa asociada
-      const companyId = String(response.results[0].toObjectId);
+      const companyId = String(response.results[0]!.toObjectId);
       return await this.getCompanyById(companyId);
     } catch (error: any) {
       console.error(
@@ -144,20 +155,26 @@ export class HubSpotClient {
   }
 
   /**
-   * Obtiene datos de una Company de HubSpot por su ID.
-   * Incluye nombre, tipo_de_empresa e id_oracle.
+   * Obtiene datos completos de una Company de HubSpot por su ID.
    */
-  async getCompanyById(companyId: string): Promise<any | null> {
+  async getCompanyById(companyId: string): Promise<HubSpotCompanyData | null> {
     try {
       const response = await this.client.crm.companies.basicApi.getById(
         companyId,
-        ["name", "tipo_de_empresa", "id_oracle"]
+        ["name", "tipo_de_empresa", "id_oracle", "phone", "email", "address", "city", "country", "iata_code"]
       );
+      const p = response.properties;
       return {
         id: response.id,
-        name: response.properties.name || "",
-        tipo_de_empresa: response.properties.tipo_de_empresa || "",
-        id_oracle: response.properties.id_oracle || null,
+        id_oracle: p.id_oracle || undefined,
+        name: p.name || undefined,
+        phone: p.phone || undefined,
+        email: p.email || undefined,
+        address: p.address || undefined,
+        city: p.city || undefined,
+        country: p.country || undefined,
+        tipo_de_empresa: p.tipo_de_empresa || undefined,
+        iata_code: p.iata_code || undefined,
       };
     } catch (error: any) {
       console.error(
@@ -170,7 +187,6 @@ export class HubSpotClient {
 
   /**
    * Actualiza propiedades de una Company en HubSpot.
-   * Se usa principalmente para guardar el id_oracle devuelto por Oracle.
    */
   async updateCompany(
     companyId: string,
@@ -210,21 +226,15 @@ export class HubSpotClient {
     return response;
   }
 
-  /**
-   * Actualiza propiedades de un Deal en HubSpot.
-   * Fix: el typo "numero_de_reserva_" fue corregido a "numero_de_reserva".
-   */
   async updateDeal(
     dealId: string,
     properties: {
       id_oracle?: string;
-      numero_de_reserva?: string;  // Fix: sin underscore al final
-      id_synxis?: string;
+      numero_de_reserva?: string;
       estado_de_reserva?: string;
     }
   ) {
     try {
-      // Limpiar valores nulos o vacíos
       const cleanProps = Object.fromEntries(
         Object.entries(properties).filter(
           ([_, v]) => v != null && v !== ""
@@ -256,38 +266,26 @@ export class HubSpotClient {
   // Cuando HubSpot dispara contact.deletion / company.deletion / deal.deletion,
   // el payload solo contiene objectId — NO incluye propiedades como id_oracle.
   //
-  // SOLUCIÓN: el SDK de HubSpot permite leer objetos archivados pasando
-  // archived=true como 5to parámetro de getById(). HubSpot mantiene el
-  // objeto archivado ~90 días antes de su purga definitiva.
-  //
-  // Firma del SDK:
-  //   basicApi.getById(id, properties?, propertiesWithHistory?, associations?, archived?)
-  //
-  // Estos métodos devuelven SOLO el id_oracle (lo único que necesitamos
-  // para operar en Oracle). Si el objeto ya fue purgado, devuelven null.
+  // El SDK permite leer objetos archivados pasando archived=true como
+  // 5to parámetro de getById(). HubSpot mantiene el objeto ~90 días.
   // =========================================================================
 
-  /**
-   * Lee un Contact archivado (eliminado) de HubSpot.
-   * Devuelve { id, id_oracle } o null si ya fue purgado.
-   */
   async getArchivedContactById(
     contactId: string
   ): Promise<{ id: string; id_oracle: string | null } | null> {
     try {
       const response = await this.client.crm.contacts.basicApi.getById(
         contactId,
-        ["id_oracle"],   // properties
-        [],              // propertiesWithHistory
-        [],              // associations
-        true             // archived = true ← clave para leer eliminados
+        ["id_oracle"],
+        [],
+        [],
+        true
       );
       return {
         id: response.id,
         id_oracle: response.properties.id_oracle || null,
       };
     } catch (error: any) {
-      // 404 = ya purgado definitivamente por HubSpot
       if (error.response?.status === 404 || error.statusCode === 404) {
         console.warn(
           `⚠️ [HubSpot] Contact archivado ${contactId} no encontrado (ya purgado).`
@@ -302,10 +300,6 @@ export class HubSpotClient {
     }
   }
 
-  /**
-   * Lee una Company archivada (eliminada) de HubSpot.
-   * Devuelve { id, id_oracle } o null si ya fue purgada.
-   */
   async getArchivedCompanyById(
     companyId: string
   ): Promise<{ id: string; id_oracle: string | null } | null> {
@@ -315,7 +309,7 @@ export class HubSpotClient {
         ["id_oracle"],
         [],
         [],
-        true             // archived = true
+        true
       );
       return {
         id: response.id,
@@ -336,10 +330,6 @@ export class HubSpotClient {
     }
   }
 
-  /**
-   * Lee un Deal archivado (eliminado) de HubSpot.
-   * Devuelve { id, id_oracle } o null si ya fue purgado.
-   */
   async getArchivedDealById(
     dealId: string
   ): Promise<{ id: string; id_oracle: string | null } | null> {
@@ -349,7 +339,7 @@ export class HubSpotClient {
         ["id_oracle"],
         [],
         [],
-        true             // archived = true
+        true
       );
       return {
         id: response.id,

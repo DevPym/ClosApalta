@@ -1,15 +1,11 @@
 // 3.2 - Capa de aplicación (jobs/) — contiene la lógica de negocio pura. No sabe nada de HTTP ni de la cola.
 
-import { OracleClient } from "../infrastructure/oracle/OracleClient.js";
-import { HubSpotClient } from "../infrastructure/hubspot/HubSpotClient.js";
+import { oracle, hubspot } from "../shared/clients.js";
 import {
     mapHubSpotContactToGuestProfile,
     mapHubSpotReservationToOracle,
     resolveOracleCompanyType,
 } from "../application/mappers.js";
-
-const oracle = new OracleClient();
-const hubspot = new HubSpotClient();
 
 // ============================================================================
 // 🏨 CREAR / ACTUALIZAR Deal (reserva)
@@ -89,8 +85,6 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
 
         let companyOracleId = hsCompany.id_oracle;
 
-        // ⚠️ FIX: si la company no tiene nombre, Oracle rechaza la creación con 400.
-        // En ese caso la ignoramos — la reserva se procesa como individual.
         if (!hsCompany.name || !hsCompany.name.trim()) {
             console.warn(
                 `⚠️ [Job:Deal] Company asociada al Deal no tiene nombre. ` +
@@ -187,7 +181,6 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
     const primaryGuest = guestProfiles.find((g) => g.isPrimary);
     if (primaryGuest) {
         await hubspot.updateContact(primaryGuest.contactId, {
-            id_oracle: primaryGuest.id,
             numero_de_reserva: String(finalConfirmation),
         });
     }
@@ -203,25 +196,19 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
 // Disparado por: POST /webhook/hubspot/deal/delete
 // Trigger HubSpot: deal.deletion
 //
-// ⚠️ RESTRICCIÓN VERIFICADA en ApiOracleReservations.json:
-//    No existe eliminación permanente para reservas confirmadas en Oracle.
+// ⚠️ No existe eliminación permanente para reservas confirmadas en Oracle.
 //    El único mecanismo disponible es la cancelación:
 //    POST /hotels/{hotelId}/reservations/{reservationId}/cancellations
 //    operationId: postCancelReservation
 //
-// ⚠️ reason.code debe ser un código válido configurado en OPERA Cloud.
+// ⚠️ El código de cancelación se configura vía ORACLE_CANCELLATION_REASON_CODE en .env.
 //    Verificar con el equipo Oracle el código correcto para tu instancia.
-//    Si Oracle devuelve 400, revisar console.error para el detalle del error.
 // ============================================================================
-
-const CANCELLATION_REASON_CODE = "OTHR";
 
 export async function deleteDeal(payload: { dealId: string }): Promise<void> {
     const { dealId } = payload;
     console.log(`🗑️ [Job:DeleteDeal] Eliminando Deal HubSpot ${dealId}`);
 
-    // Leer el deal archivado para obtener id_oracle.
-    // HubSpot mantiene el objeto ~90 días después de la eliminación.
     const archived = await hubspot.getArchivedDealById(dealId);
 
     if (!archived) {
@@ -240,11 +227,7 @@ export async function deleteDeal(payload: { dealId: string }): Promise<void> {
         return;
     }
 
-    // POST /hotels/{hotelId}/reservations/{id_oracle}/cancellations
-    const cancellationNumber = await oracle.cancelReservation(
-        archived.id_oracle,
-        CANCELLATION_REASON_CODE
-    );
+    const cancellationNumber = await oracle.cancelReservation(archived.id_oracle);
 
     console.log(
         `✅ [Job:DeleteDeal] Deal ${dealId} → Reserva Oracle ${archived.id_oracle} cancelada. ` +

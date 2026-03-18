@@ -1,12 +1,8 @@
 // 3.3 - Capa de aplicación (jobs/) — contiene la lógica de negocio pura. No sabe nada de HTTP ni de la cola.
 
-import { OracleClient } from "../infrastructure/oracle/OracleClient.js";
-import { HubSpotClient } from "../infrastructure/hubspot/HubSpotClient.js";
+import { oracle, hubspot } from "../shared/clients.js";
 import { resolveOracleCompanyType } from "../application/mappers.js";
 import type { HubSpotCompanyData } from "../domain/types.js";
-
-const oracle = new OracleClient();
-const hubspot = new HubSpotClient();
 
 // ============================================================================
 // 🏢 CREAR / ACTUALIZAR Company
@@ -110,7 +106,6 @@ export async function deleteCompany(payload: { companyId: string }): Promise<voi
         return;
     }
 
-    // DELETE /crm/v1/profiles/{profileId} → anonimiza el perfil Company/Agent
     await oracle.anonymizeProfile(archived.id_oracle);
 
     console.log(
