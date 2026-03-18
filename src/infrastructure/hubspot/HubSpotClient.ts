@@ -57,7 +57,7 @@ export class HubSpotClient {
         filterGroups: [
           {
             filters: [
-              { propertyName: "id_oracle", operator: "EQ", value: oracleId },
+              { propertyName: "id_oracle", operator: "EQ" as any, value: oracleId },
             ],
           },
         ],
@@ -114,7 +114,6 @@ export class HubSpotClient {
         return await this.client.crm.contacts.basicApi.update(
           email,
           { properties },
-          undefined,
           "email"
         );
       }

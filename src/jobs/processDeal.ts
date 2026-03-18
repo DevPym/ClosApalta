@@ -27,14 +27,13 @@ export async function processDeal(payload: { dealId: string }): Promise<void> {
     const { dealId } = payload;
     console.log(`🏨 [Job:Deal] Procesando Deal HubSpot ${dealId}`);
 
+
     // ── PASO 1: Deal completo ────────────────────────────────────────────────
     const fullDeal = await hubspot.getDealById(dealId);
     const props = fullDeal.properties;
+    const existingOracleId: string | null = props.id_oracle || null;
+    const currentConfirmation: string | null = props.numero_de_reserva || null;
 
-    const existingOracleId: string | null =
-        props.id_oracle?.value || props.id_oracle || null;
-    const currentConfirmation: string | null =
-        props.numero_de_reserva?.value || props.numero_de_reserva || null;
 
     // ── PASO 2: Contactos con etiquetas ─────────────────────────────────────
     const associations = await hubspot.getAssociatedContacts(dealId);
